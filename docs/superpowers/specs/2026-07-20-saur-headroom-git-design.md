@@ -37,10 +37,12 @@ The copied ArchWiki markdown snapshots under `docs/` will be removed. Their dura
 - use a source-local Cargo home and locked dependency resolution;
 - install the wheel with `python-installer` without downloading dependencies during packaging;
 - install upstream `LICENSE` and `NOTICE` files;
-- provide and conflict with the stable `headroom` package name;
+- provide and conflict with `headroom-ai`, the stable package for this project;
 - declare the complete upstream `[all]` feature dependency set using Arch repository or AUR package names.
 
 The package remains Arch-native: dependencies are owned by pacman, not hidden in a bundled `uv` or virtualenv installation. Because several full-feature dependencies are AUR packages, users must install them with an AUR helper or build them before invoking plain `makepkg`.
+
+The AUR package named `headroom` is an unrelated Haskell license-header manager. Both projects install `/usr/bin/headroom`, so `headroom-git` must also conflict with `headroom` while never claiming to provide it.
 
 ## Error handling and safety
 
