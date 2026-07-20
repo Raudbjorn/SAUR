@@ -1,0 +1,26 @@
+# Nested Git metadata (explicitly requested)
+*/.git
+
+# Disposable upstream research checkouts
+/headroom-git/headroom/
+/headroom-git/headroom-src/
+/tinbase-git/tinbase/
+
+# Local agent state and worktrees
+/.claude/
+/.worktrees/
+
+# makepkg outputs
+/*/src/
+/*/pkg/
+*.pkg.tar.*
+*.src.tar.*
+*.log
+
+# Python build residue
+__pycache__/
+*.py[cod]
+
+# Editor and OS residue
+*~
+.DS_Store
