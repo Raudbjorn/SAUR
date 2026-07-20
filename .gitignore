@@ -5,6 +5,7 @@
 /headroom-git/headroom/
 /headroom-git/headroom-src/
 /tinbase-git/tinbase/
+/tinbase-git/tinbase-src/
 
 # Local agent state and worktrees
 /.claude/
@@ -15,6 +16,7 @@
 /*/pkg/
 *.pkg.tar.*
 *.src.tar.*
+/python-installer/python-installer-*.tar.gz
 *.log
 
 # Python build residue

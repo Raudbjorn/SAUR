@@ -9,7 +9,8 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 
 | Package | Description | Status |
 | --- | --- | --- |
-| [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable; several runtime dependencies come from AUR |
+| [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
+| [`python-installer`](python-installer/) | Temporary 1.0.1 bridge required to build AUR `python-rapidocr` | Remove after configured repositories ship 1.0.1 or newer |
 
 ## Repository layout
 
@@ -18,11 +19,14 @@ SAUR/
 ├── docs/
 │   ├── packaging-guide.md   # Local packaging and review workflow
 │   └── template.PKGBUILD    # Starting point for a new recipe
-└── headroom-git/
+├── headroom-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Package recipe
+│   └── README.md            # Package-specific notes
+└── python-installer/
     ├── .SRCINFO             # Generated AUR metadata
-    ├── PKGBUILD             # Package recipe
-    └── README.md            # Package-specific notes
-```
+    ├── PKGBUILD             # Temporary repository-version bridge
+    └── README.md            # Removal condition and build notes
 
 Upstream source checkouts used during package research are deliberately ignored. `makepkg` obtains its own source under the package's `src/` directory.
 
@@ -34,33 +38,46 @@ Install `base-devel` and Git first:
 sudo pacman -S --needed base-devel git
 ```
 
-Clone this repository, inspect the recipe, then build from the package directory:
+The workflow below also requires an installed and configured `paru`; pacman
+cannot resolve packages from AUR.
+
+Clone this repository and inspect both recipes. Install the local bridge first,
+verify its versioned dependency, and only then let paru resolve Headroom's AUR
+dependency graph:
 
 ```bash
-git clone https://github.com/Raudbjorn/SAUR.git
-cd SAUR/headroom-git
-less PKGBUILD
-makepkg -si
+git clone https://github.com/Raudbjorn/SAUR.git &&
+  cd SAUR &&
+  less python-installer/PKGBUILD &&
+  less headroom-git/PKGBUILD &&
+  (
+    cd python-installer &&
+      makepkg -si --needed --force
+  ) &&
+  pacman -T 'python-installer>=1.0.1' &&
+  paru -Bi ./headroom-git
 ```
 
-Packages with AUR dependencies require those dependencies to be built first. An AUR helper can resolve them while building a local recipe:
-
-```bash
-cd SAUR/headroom-git
-paru -Bi .
-```
+`pacman -T` must print nothing. Do not collapse these stages into
+`paru -Bi ./python-installer ./headroom-git`: paru can build the bridge without
+installing it before evaluating AUR `python-rapidocr`. Plain `makepkg -s`
+delegates dependency installation to pacman, which cannot resolve AUR packages.
 
 Never run `makepkg` as root.
 
 ## Update a VCS package
 
-A `-git` package resolves the current upstream revision while building. Refresh it with:
+A `-git` package resolves the current upstream revision while building. From
+the SAUR repository root, refresh it with:
 
 ```bash
-cd headroom-git
-git pull --ff-only
-makepkg -Csi
+git pull --ff-only &&
+  pacman -T 'python-installer>=1.0.1' &&
+  paru -Bi ./headroom-git
 ```
+
+If `pacman -T` reports the bridge as missing, repeat the initial bridge
+installation above before rebuilding Headroom.
 
 When maintaining a recipe, regenerate `.SRCINFO` after every metadata change:
 

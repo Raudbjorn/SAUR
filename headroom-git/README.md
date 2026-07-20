@@ -39,24 +39,33 @@ The full feature set is substantial. Official Arch repositories provide most dep
 
 Arch currently ships Python 3.14. Upstream restricts LiteLLM to Python versions below 3.14, so this package correctly omits `litellm`; Headroom's token accounting works, but LiteLLM-backed model pricing and dollar-savings estimates are unavailable. Users who require that integration need an isolated Python 3.13 installation rather than forcing an incompatible system dependency.
 
-Plain `makepkg -s` cannot build missing AUR dependencies. From this directory, use an AUR helper that supports local recipes:
+Plain `makepkg -s` cannot build missing AUR dependencies. The current Arch
+repository also provides `python-installer` 1.0.0 while AUR `python-rapidocr`
+requires 1.0.1. From the SAUR repository root, install the local bridge first
+and then let paru resolve this package:
+
+These commands require an installed and configured `paru`.
 
 ```bash
-paru -Bi .
+(
+  cd python-installer &&
+    makepkg -si --needed --force
+) &&
+  pacman -T 'python-installer>=1.0.1' &&
+  paru -Bi ./headroom-git
 ```
 
-Alternatively, install/build the declared dependencies first and then run `makepkg -si`.
+`pacman -T` must print nothing. A single
+`paru -Bi ./python-installer ./headroom-git` invocation is not equivalent:
+paru may build the bridge without activating it before checking RapidOCR.
 
 Upstream excludes the compromised PyPI distribution `ast-grep-cli==0.44.1`; that wheel shipped an info-stealer. This recipe depends on Arch's native Rust `ast-grep` package instead and does not install the affected PyPI wheel.
 
-## Build
+## Build internals
 
-Review the recipe, then build as an unprivileged user:
-
-```bash
-less PKGBUILD
-makepkg -si
-```
+Review `PKGBUILD` before running the repository-root commands above. Once all
+declared dependencies are installed, plain `makepkg -si` also works from this
+directory.
 
 `pkgver()` combines upstream's declared version with the Git revision count and abbreviated commit. Rebuilding later resolves the latest `main` revision automatically.
 
