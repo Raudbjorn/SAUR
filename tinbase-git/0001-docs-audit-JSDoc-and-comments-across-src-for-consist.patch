@@ -1,0 +1,3027 @@
+From e893e645ba32cf888b9071d994b5f6fe7aba7177 Mon Sep 17 00:00:00 2001
+From: BankkRoll <106103625+BankkRoll@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 10:52:15 -0400
+Subject: [PATCH] docs: audit JSDoc and comments across src for consistency
+
+Port the applicable documentation audit onto current main so source comments
+and editor hovers are more consistent for contributors.
+
+- Add JSDoc to previously bare exports and non-obvious type properties covered
+  by the donor audit.
+- Add file-level headers and consistent section separators where applicable.
+- Prefer comments that explain intent over line-by-line narration.
+- Normalize em dashes to hyphens in comments and a few user-facing
+  console/error strings.
+
+The donor branch also carried an auth-settings fix and test, but current main
+does not contain that parent feature; this port intentionally leaves those
+deleted files out rather than resurrecting stale runtime code.
+
+Runtime changes are limited to em-dash normalization in user-facing strings.
+
+Verification: the build passes and 31 test files (208 tests) pass. The
+external-Postgres suite and native db-reset test could not start because the
+bundled PostgreSQL requires libxml2.so.2, which is unavailable on this host.
+---
+ src/admin/api.ts            | 15 +++++++-
+ src/auth/handler.ts         | 21 +++++++++---
+ src/auth/inbox.ts           |  6 ++--
+ src/auth/oauth.ts           | 35 ++++++++++++++++---
+ src/auth/password.ts        |  7 ++++
+ src/auth/qr.ts              |  2 +-
+ src/auth/totp.ts            |  2 +-
+ src/cli.ts                  | 46 +++++++++++++++++--------
+ src/cron/service.ts         |  8 ++++-
+ src/db/bootstrap.ts         | 18 +++++++---
+ src/db/database.ts          | 68 +++++++++++++++++++++++++++++++++----
+ src/db/emulated.ts          | 64 +++++++++++++++++++++-------------
+ src/db/engine.ts            | 24 ++++++++++---
+ src/db/inspect.ts           |  7 +++-
+ src/db/pglite-engine.ts     | 10 ++++--
+ src/db/pgmem-engine.ts      | 26 ++++++++------
+ src/db/schema-diff.ts       | 16 +++++++--
+ src/db/sql-compat.ts        |  4 +--
+ src/functions/deno-shim.ts  |  5 +--
+ src/functions/handler.ts    | 13 ++++---
+ src/gen-types.ts            |  5 +++
+ src/index.ts                | 34 ++++++++++++++++---
+ src/jwt.ts                  |  7 ++--
+ src/log-buffer.ts           |  8 ++++-
+ src/net/service.ts          | 15 ++++++--
+ src/node/bun-server.ts      |  5 ++-
+ src/node/bundle-function.ts |  2 +-
+ src/node/db-diff.ts         | 14 +++++++-
+ src/node/fs-driver.ts       | 21 +++++++++++-
+ src/node/load-functions.ts  | 10 +++++-
+ src/node/native/engine.ts   | 19 +++++++----
+ src/node/native/wire.ts     | 28 ++++++++++-----
+ src/node/project.ts         | 12 +++++--
+ src/node/server-shared.ts   |  5 ++-
+ src/node/server.ts          | 11 ++++++
+ src/node/ws.ts              | 25 +++++++++++++-
+ src/realtime/engine.ts      | 38 +++++++++++++++++----
+ src/rest/build.ts           | 41 +++++++++++++++++++++-
+ src/rest/errors.ts          | 12 +++++++
+ src/rest/handler.ts         | 17 ++++++++++
+ src/rest/parse.ts           | 27 +++++++++++++--
+ src/retention/service.ts    |  5 ++-
+ src/storage/driver.ts       |  9 ++++-
+ src/storage/handler.ts      |  6 +++-
+ src/types.ts                | 24 +++++++++++++
+ src/webhooks/service.ts     | 13 ++++++-
+ 46 files changed, 671 insertions(+), 139 deletions(-)
+
+diff --git a/src/admin/api.ts b/src/admin/api.ts
+index b9a6562..1a3bb1c 100644
+--- a/src/admin/api.ts
++++ b/src/admin/api.ts
+@@ -16,12 +16,14 @@ function json(status: number, body: unknown): Response {
+   })
+ }
+ 
++/** Service-role-gated Studio admin surface for schema introspection, raw SQL, RLS policies, logs, and stats. */
+ export class AdminApi {
+   constructor(
+     private db: Database,
+     private logs?: LogBuffer
+   ) {}
+ 
++  /** Route an /admin/v1/* request to its handler, rejecting any non-service_role caller with a 403. */
+   async handle(req: Request, ctx: RequestContext, url: URL): Promise<Response> {
+     if (ctx.role !== 'service_role') {
+       return json(403, { error: 'admin API requires the service_role key' })
+@@ -51,15 +53,17 @@ export class AdminApi {
+     }
+   }
+ 
++  /** List a schema's tables and views with columns, primary keys, row counts, and outbound foreign keys for the studio table browser. */
+   private async listTables(url: URL): Promise<Response> {
+     const schema = url.searchParams.get('schema') ?? 'public'
+     this.db.invalidateSchemaCache()
+     const info = await this.db.getSchemaInfo(schema)
++
+     const tables = []
+     for (const t of info.tables.values()) {
+       // A single table whose count fails (e.g. an engine gap in an RLS policy's
+       // correlated subquery on the pgmem preview engine) must not blank the whole
+-      // table list — fall back to an unknown count for just that table.
++      // table list - fall back to an unknown count for just that table.
+       let count: { rows: { n: number }[] }
+       try {
+         count = await this.db.query<{ n: number }>(
+@@ -89,6 +93,7 @@ export class AdminApi {
+     return json(200, { schema, tables })
+   }
+ 
++  /** Run an arbitrary SQL statement from the studio SQL editor. */
+   private async runSql(req: Request): Promise<Response> {
+     const body = (await req.json().catch(() => ({}))) as { query?: string }
+     if (!body.query?.trim()) return json(400, { error: 'query is required' })
+@@ -108,6 +113,7 @@ export class AdminApi {
+     }
+   }
+ 
++  /** List user-visible schema names (excluding the Postgres catalog schemas). */
+   private async schemas(): Promise<Response> {
+     const res = await this.db.query<{ name: string }>(
+       `select schema_name as name from information_schema.schemata
+@@ -117,6 +123,7 @@ export class AdminApi {
+     return json(200, { schemas: res.rows.map((r) => r.name) })
+   }
+ 
++  /** List applied migrations from supabase_migrations.schema_migrations, ordered by version. */
+   private async migrations(): Promise<Response> {
+     const res = await this.db.query<{ version: string; name: string | null; applied_at: string }>(
+       `select version, name, applied_at from supabase_migrations.schema_migrations order by version`
+@@ -124,6 +131,7 @@ export class AdminApi {
+     return json(200, { migrations: res.rows })
+   }
+ 
++  /** List the RLS policies defined in a schema (from pg_policies). */
+   private async listPolicies(url: URL): Promise<Response> {
+     const schema = url.searchParams.get('schema') ?? 'public'
+     const res = await this.db.query(
+@@ -136,6 +144,7 @@ export class AdminApi {
+     return json(200, { policies: res.rows })
+   }
+ 
++  /** Create an RLS policy from the studio policy editor, building the CREATE POLICY DDL from the request body. */
+   private async createPolicy(req: Request): Promise<Response> {
+     const b = (await req.json().catch(() => ({}))) as {
+       schema?: string
+@@ -163,6 +172,7 @@ export class AdminApi {
+     }
+   }
+ 
++  /** Drop an RLS policy by schema/table/name. */
+   private async dropPolicy(url: URL): Promise<Response> {
+     const schema = url.searchParams.get('schema') ?? 'public'
+     const table = url.searchParams.get('table')
+@@ -176,6 +186,7 @@ export class AdminApi {
+     }
+   }
+ 
++  /** List a schema's SQL functions with signatures, language, and source body. */
+   private async listFunctions(url: URL): Promise<Response> {
+     const schema = url.searchParams.get('schema') ?? 'public'
+     const res = await this.db.query(
+@@ -194,6 +205,7 @@ export class AdminApi {
+     return json(200, { functions: res.rows })
+   }
+ 
++  /** List a schema's user triggers with timing and events, decoded from pg_trigger's tgtype bitmask. */
+   private async listTriggers(url: URL): Promise<Response> {
+     const schema = url.searchParams.get('schema') ?? 'public'
+     const res = await this.db.query(
+@@ -215,6 +227,7 @@ export class AdminApi {
+     return json(200, { triggers: res.rows })
+   }
+ 
++  /** Summary counts (users, buckets, objects, migrations, tables) plus database size and version for the studio dashboard. */
+   private async stats(): Promise<Response> {
+     const one = async (sql: string) => (await this.db.query<{ n: number }>(sql)).rows[0]?.n ?? 0
+     const users = await one(`select count(*)::int as n from auth.users`)
+diff --git a/src/auth/handler.ts b/src/auth/handler.ts
+index 724e3bd..001d48e 100644
+--- a/src/auth/handler.ts
++++ b/src/auth/handler.ts
+@@ -1,5 +1,5 @@
+ /**
+- * GoTrue-compatible auth endpoints (/auth/v1/*) — the subset supabase-js
++ * GoTrue-compatible auth endpoints (/auth/v1/*) - the subset supabase-js
+  * uses for email/password auth, sessions, and admin user management.
+  */
+ import type { Database } from '../db/database.js'
+@@ -10,11 +10,17 @@ import { hashPassword, verifyPassword } from './password.js'
+ import { qrSvgDataUri } from './qr.js'
+ import { generateTotpSecret, otpauthUri, verifyTotp } from './totp.js'
+ 
++/** Construction-time config for {@link AuthHandler}. */
+ export interface AuthConfig {
++  /** HS256 secret used to sign and verify access tokens */
+   jwtSecret: string
++  /** public base URL of this instance; used as issuer and default redirect target */
+   siteUrl: string
++  /** Access-token lifetime in seconds. */
+   jwtExpiry: number
++  /** sends outgoing auth email (magic links, OTP codes, recovery) */
+   mailer: Mailer
++  /** OAuth providers to enable, keyed by provider name (google, github, …) */
+   oauthProviders?: Record<string, OAuthProviderConfig>
+   /** injectable fetch for the OAuth provider calls (tests use a mock provider) */
+   oauthFetch?: typeof fetch
+@@ -41,6 +47,7 @@ function authError(status: number, errorCode: string, msg: string): Response {
+   return json(status, { code: status, error_code: errorCode, msg })
+ }
+ 
++
+ function json(status: number, body: unknown): Response {
+   return new Response(status === 204 ? null : JSON.stringify(body), {
+     status,
+@@ -53,9 +60,11 @@ function iso(v: Date | string | null): string | null {
+   return v instanceof Date ? v.toISOString() : new Date(v).toISOString()
+ }
+ 
++/** Routes and services the GoTrue-compatible `/auth/v1/*` endpoints. */
+ export class AuthHandler {
+   private oauth: OAuthService
+ 
++
+   constructor(
+     private db: Database,
+     private config: AuthConfig
+@@ -63,6 +72,7 @@ export class AuthHandler {
+     this.oauth = new OAuthService(db, config.siteUrl, config.oauthProviders ?? {}, config.oauthFetch ?? fetch)
+   }
+ 
++  /** Dispatch one `/auth/v1/*` request. Any thrown error becomes a 500 `unexpected_failure`. */
+   async handle(req: Request, ctx: RequestContext, url: URL): Promise<Response> {
+     const path = url.pathname.replace(/^\/auth\/v1\/?/, '').replace(/\/+$/, '')
+     const method = req.method.toUpperCase()
+@@ -218,7 +228,7 @@ export class AuthHandler {
+     const params: unknown[] = []
+     // Upgrading an anonymous user to a permanent one: adding an email (and
+     // usually a password) keeps the same id + data, flips is_anonymous off, and
+-    // records an email identity — matching supabase.auth.updateUser({ email }).
++    // records an email identity - matching supabase.auth.updateUser({ email }).
+     const upgradingAnon = (user.is_anonymous ?? false) && !!body.email
+     if (body.email) {
+       const email = body.email.toLowerCase().trim()
+@@ -365,7 +375,7 @@ export class AuthHandler {
+     const body = (await req.json().catch(() => ({}))) as { type?: string; email?: string; token?: string }
+     if (!body.token) return authError(400, 'validation_failed', 'token is required')
+     // A recovery (password-reset) token must be redeemed with type=recovery
+-    // explicitly — never fold it into the default set, or a guessed login OTP
++    // explicitly - never fold it into the default set, or a guessed login OTP
+     // could mint a recovery session.
+     const types =
+       body.type === 'recovery' ? ['recovery'] : body.type === 'magiclink' ? ['magiclink'] : ['otp', 'magiclink']
+@@ -508,7 +518,7 @@ export class AuthHandler {
+   /**
+    * Export everything held about one user across the auth schema, for a GDPR
+    * right-of-access / portability request. Credentials (password hash, MFA
+-   * secrets, raw token values) are deliberately omitted — they are not personal
++   * secrets, raw token values) are deliberately omitted - they are not personal
+    * data to hand back and exporting them would leak secrets.
+    */
+   private async exportUser(userId: string): Promise<Response> {
+@@ -561,7 +571,7 @@ export class AuthHandler {
+    * doesn't exist and a summary of what was erased.
+    *
+    * Note: storage.objects.owner has no FK to auth.users, so object rows/bytes
+-   * owned by the user are not removed here — see COMPLIANCE.md for the
++   * owned by the user are not removed here - see COMPLIANCE.md for the
+    * storage-erasure step the operator must run.
+    */
+   private async eraseUser(userId: string): Promise<Response> {
+@@ -729,6 +739,7 @@ export class AuthHandler {
+     return (res.rows[0] as UserRow) ?? null
+   }
+ 
++  /** Shape a user row into the GoTrue user object supabase-js expects. */
+   userJson(u: UserRow, factors: Record<string, unknown>[] = []): Record<string, unknown> {
+     return {
+       id: u.id,
+diff --git a/src/auth/inbox.ts b/src/auth/inbox.ts
+index ea52327..c9ebd28 100644
+--- a/src/auth/inbox.ts
++++ b/src/auth/inbox.ts
+@@ -1,16 +1,17 @@
+ /**
+- * Local email inbox — the tinbase equivalent of Supabase local's Inbucket /
++ * Local email inbox - the tinbase equivalent of Supabase local's Inbucket /
+  * Mailpit. When no custom mailer is configured, outgoing auth emails (magic
+  * links, OTP codes, password recovery, email-change confirmations) are captured
+  * in memory and viewable at /inbox, so you can test those flows locally without
+  * a real SMTP server.
+  *
+  * Dev-only by nature: it exposes email contents (including sign-in links) with
+- * no auth, exactly like Inbucket. Not for production — provide your own
++ * no auth, exactly like Inbucket. Not for production - provide your own
+  * `mailer` there and no inbox is mounted.
+  */
+ import type { MailMessage, Mailer } from '../types.js'
+ 
++/** A captured message plus the link/code extracted from its body for the inbox UI. */
+ export interface InboxEntry extends MailMessage {
+   id: string
+   created_at: string
+@@ -22,6 +23,7 @@ export interface InboxEntry extends MailMessage {
+ 
+ const CAP = 200
+ 
++/** In-memory {@link Mailer} that captures the most recent {@link CAP} messages and serves the /inbox UI. */
+ export class InboxMailer implements Mailer {
+   private messages: InboxEntry[] = []
+ 
+diff --git a/src/auth/oauth.ts b/src/auth/oauth.ts
+index 9f63ae1..f466de5 100644
+--- a/src/auth/oauth.ts
++++ b/src/auth/oauth.ts
+@@ -13,23 +13,35 @@
+ import type { Database } from '../db/database.js'
+ import { randomToken } from '../jwt.js'
+ 
++/** Operator-supplied config for one OAuth provider. Endpoint URLs are optional for presets (google, github). */
+ export interface OAuthProviderConfig {
++  /** OAuth client id issued by the provider */
+   clientId: string
++  /** OAuth client secret issued by the provider */
+   clientSecret: string
+-  /** Overrides; filled from a preset for known providers (google, github). */
++  /** Authorization endpoint; filled from a preset when omitted. */
+   authorizeUrl?: string
++  /** token endpoint; filled from a preset when omitted */
+   tokenUrl?: string
++  /** userinfo endpoint; filled from a preset when omitted */
+   userInfoUrl?: string
++  /** space-separated scopes to request; falls back to the preset's */
+   scopes?: string
+   /** Map the provider's raw userinfo JSON to a normalized profile. */
+   profileMap?: (raw: any) => OAuthProfile
+ }
+ 
++/** Normalized profile extracted from a provider's userinfo response. */
+ export interface OAuthProfile {
++  /** Provider-local user id (becomes auth.identities.provider_id). */
+   id: string
++  /** email address the provider returned, if any */
+   email?: string
++  /** Whether the provider asserts the email is verified; gated for account linking. */
+   emailVerified?: boolean
++  /** display name the provider returned, if any */
+   name?: string
++  /** extra provider fields (avatar, username, …) merged into identity_data */
+   metadata?: Record<string, unknown>
+ }
+ 
+@@ -61,6 +73,12 @@ const PRESETS: Record<string, Partial<OAuthProviderConfig>> = {
+   },
+ }
+ 
++/**
++ * Merge operator config with the built-in preset for `name` into a fully
++ * resolved provider.
++ *
++ * @throws if no endpoint URLs are supplied and no preset exists for `name`.
++ */
+ export function resolveProvider(name: string, cfg: OAuthProviderConfig): ResolvedProvider {
+   const preset = PRESETS[name] ?? {}
+   const authorizeUrl = cfg.authorizeUrl ?? preset.authorizeUrl
+@@ -81,6 +99,7 @@ export function resolveProvider(name: string, cfg: OAuthProviderConfig): Resolve
+   }
+ }
+ 
++/** Drives the OAuth authorize/callback/PKCE flows against the configured providers. */
+ export class OAuthService {
+   private providers = new Map<string, ResolvedProvider>()
+ 
+@@ -95,6 +114,7 @@ export class OAuthService {
+     }
+   }
+ 
++  /** Whether a provider by this name is configured. */
+   has(name: string): boolean {
+     return this.providers.has(name)
+   }
+@@ -103,7 +123,7 @@ export class OAuthService {
+     return `${this.siteUrl}/auth/v1/callback`
+   }
+ 
+-  /** GET /authorize — persist state, redirect to the provider. */
++  /** GET /authorize - persist state, redirect to the provider. */
+   async authorize(url: URL): Promise<Response> {
+     const providerName = url.searchParams.get('provider') ?? ''
+     const provider = this.providers.get(providerName)
+@@ -112,6 +132,7 @@ export class OAuthService {
+     }
+     const providerState = randomToken(16)
+     const scopes = url.searchParams.get('scopes') || provider.scopes
++
+     await this.db.query(
+       `insert into auth.flow_state (provider, provider_state, redirect_to, code_challenge, code_challenge_method, expires_at)
+        values ($1, $2, $3, $4, $5, now() + interval '10 minutes')`,
+@@ -133,7 +154,7 @@ export class OAuthService {
+     return redirect(`${provider.authorizeUrl}?${p}`)
+   }
+ 
+-  /** GET /callback — exchange code, upsert user+identity, redirect back. */
++  /** GET /callback - exchange code, upsert user+identity, redirect back. */
+   async callback(url: URL, createSession: (userId: string) => Promise<OAuthSession>): Promise<Response> {
+     const code = url.searchParams.get('code')
+     const state = url.searchParams.get('state')
+@@ -176,7 +197,7 @@ export class OAuthService {
+     return redirect(`${flow.redirect_to}${hash}`)
+   }
+ 
+-  /** POST /token?grant_type=pkce — exchange an auth code + verifier for a session. */
++  /** POST /token?grant_type=pkce - exchange an auth code + verifier for a session. */
+   async exchangePkce(authCode: string, verifier: string): Promise<string | null> {
+     const res = await this.db.query<FlowRow>(
+       `delete from auth.flow_state where auth_code = $1 and expires_at > now() returning *`,
+@@ -240,7 +261,7 @@ export class OAuthService {
+     }
+ 
+     // Link to an existing user with the same email ONLY when the provider
+-    // asserts the email is verified — otherwise an attacker could register a
++    // asserts the email is verified - otherwise an attacker could register a
+     // provider account with a victim's unverified email and take over their
+     // account. Unverified → fall through and create a separate user.
+     let userId: string | undefined
+@@ -281,9 +302,13 @@ export class OAuthService {
+   }
+ }
+ 
++/** The minimal session the callback puts in the redirect fragment for the implicit flow. */
+ export interface OAuthSession {
++  /** signed access token (JWT) */
+   access_token: string
++  /** opaque refresh token */
+   refresh_token: string
++  /** access-token lifetime in seconds */
+   expires_in: number
+ }
+ 
+diff --git a/src/auth/password.ts b/src/auth/password.ts
+index 6f4fa9d..b4a807e 100644
+--- a/src/auth/password.ts
++++ b/src/auth/password.ts
+@@ -24,12 +24,17 @@ async function derive(password: string, salt: Uint8Array, iterations: number): P
+   return new Uint8Array(bits)
+ }
+ 
++/** Hash a password into the self-describing `pbkdf2$iterations$salt$hash` string stored in encrypted_password. */
+ export async function hashPassword(password: string): Promise<string> {
+   const salt = crypto.getRandomValues(new Uint8Array(16))
+   const hash = await derive(password, salt, ITERATIONS)
+   return `pbkdf2$${ITERATIONS}$${toHex(salt)}$${toHex(hash)}`
+ }
+ 
++/**
++ * Verify a password against a stored `pbkdf2$…` hash, re-deriving with the
++ * salt/iterations embedded in it. Returns false for any malformed hash.
++ */
+ export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+   const parts = stored.split('$')
+   if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false
+@@ -39,6 +44,8 @@ export async function verifyPassword(password: string, stored: string): Promise<
+   const hash = await derive(password, salt, iterations)
+   const actual = toHex(hash)
+   if (actual.length !== expected.length) return false
++  // SECURITY: constant-time compare over the full hash to avoid leaking a
++  // match prefix via timing.
+   let diff = 0
+   for (let i = 0; i < actual.length; i++) diff |= actual.charCodeAt(i) ^ expected.charCodeAt(i)
+   return diff === 0
+diff --git a/src/auth/qr.ts b/src/auth/qr.ts
+index e0fe0f7..385dce0 100644
+--- a/src/auth/qr.ts
++++ b/src/auth/qr.ts
+@@ -1,7 +1,7 @@
+ /**
+  * Minimal QR Code generator (byte mode, full version/ECC/mask support) used to
+  * render the MFA enrollment otpauth:// URI as a scannable SVG. Compact port of
+- * Nayuki's public-domain "QR Code generator" algorithm — no dependencies.
++ * Nayuki's public-domain "QR Code generator" algorithm - no dependencies.
+  * Source of the algorithm: https://www.nayuki.io/page/qr-code-generator-library
+  */
+ 
+diff --git a/src/auth/totp.ts b/src/auth/totp.ts
+index 6d90a40..ec8eaee 100644
+--- a/src/auth/totp.ts
++++ b/src/auth/totp.ts
+@@ -1,5 +1,5 @@
+ /**
+- * TOTP (RFC 6238) for MFA — pure WebCrypto, no dependencies. GoTrue uses
++ * TOTP (RFC 6238) for MFA - pure WebCrypto, no dependencies. GoTrue uses
+  * SHA-1, 6 digits, a 30-second period; we mirror that so any standard
+  * authenticator app (Google Authenticator, 1Password, …) works against the
+  * secret we hand out at enroll time.
+diff --git a/src/cli.ts b/src/cli.ts
+index 6cb2c20..88a4d00 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env node
+ /**
+- * tinbase CLI — a Docker-free Supabase-compatible backend.
++ * tinbase CLI - a Docker-free Supabase-compatible backend.
+  *
+  *   tinbase start     start the server (applies pending migrations first)
+  *   tinbase migrate   apply pending migrations and exit
+@@ -23,7 +23,7 @@ import { serveBun } from './node/bun-server.js'
+ const IS_BUN = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined'
+ // single-file builds ship without the WASM engine; native is the default there
+ const IS_BINARY = process.env.TINBASE_SINGLE_BINARY === '1'
+-// Native (embedded Postgres) is the default where it's supported — macOS/Linux
++// Native (embedded Postgres) is the default where it's supported - macOS/Linux
+ // on x64/arm64. Elsewhere (e.g. Windows) fall back to the WASM (PGlite) engine.
+ const NATIVE_SUPPORTED =
+   (process.platform === 'darwin' || process.platform === 'linux') &&
+@@ -31,22 +31,38 @@ const NATIVE_SUPPORTED =
+ import { signJwt } from './jwt.js'
+ import { DEFAULT_JWT_SECRET } from './types.js'
+ 
++/** Parsed command + flags for one CLI invocation. */
+ interface CliOptions {
++  /** subcommand to run (defaults to `start`) */
+   command: string
+   /** positional args after the command, e.g. `db reset` → ['reset'] */
+   positionals: string[]
++  /** port to listen on for `start` */
+   port: number
++  /** host/interface to bind */
+   host: string
++  /** project directory containing supabase/ */
+   dir: string
++  /** database data directory; undefined for in-memory (`--memory`) */
+   dataDir: string | undefined
++  /** directory for storage object bytes */
+   storageDir: string
++  /** secret used to sign/verify JWTs */
+   jwtSecret: string
++  /** run the database in memory with no persistence */
+   memory: boolean
++  /** database engine: native embedded Postgres, wasm (PGlite), or pgmem (in-memory subset) */
+   engine: 'wasm' | 'native' | 'pgmem'
+   databaseUrl?: string
++  /** output migration name for `db diff -f`, if given */
+   diffFile?: string
+ }
+ 
++/**
++ * Parse argv (already sliced past `node cli.js`) into {@link CliOptions}. The
++ * command defaults to `start`; env vars provide defaults for port, JWT secret,
++ * and engine. Exits the process on an unknown flag or `--help`.
++ */
+ function parseArgs(argv: string[]): CliOptions {
+   const args = [...argv]
+   const command = args[0] && !args[0].startsWith('-') ? args.shift()! : 'start'
+@@ -110,8 +126,9 @@ function loadWebhooks(dir: string): import('./webhooks/service.js').WebhookConfi
+   }
+ }
+ 
++/** Print usage (commands + options) to stdout. */
+ function printHelp(): void {
+-  console.log(`tinbase — Supabase-compatible backend, no Docker (embedded Postgres / PGlite)
++  console.log(`tinbase - Supabase-compatible backend, no Docker (embedded Postgres / PGlite)
+ 
+ Usage: tinbase [command] [options]
+ 
+@@ -135,8 +152,8 @@ Options:
+       --jwt-secret <s>  JWT secret (or TINBASE_JWT_SECRET env var)
+       --memory          in-memory database (no persistence, wasm engine only)
+       --engine <e>      native (embedded Postgres, default on macOS/Linux),
+-                        wasm (PGlite — default on Windows, browser-ready), or
+-                        pgmem (ultralight in-memory subset — no RLS, cron, or
++                        wasm (PGlite - default on Windows, browser-ready), or
++                        pgmem (ultralight in-memory subset - no RLS, cron, or
+                         pgmq; local dev / preview only)
+       --database-url <url>  connect to an external Postgres you already run
+                         (postgres://user:pass@host:5432/db; or DATABASE_URL env).
+@@ -144,11 +161,12 @@ Options:
+ `)
+ }
+ 
++/** CLI entry point: parse args, dispatch the subcommand, and (for `start`) run the server until SIGINT/SIGTERM. */
+ async function main(): Promise<void> {
+   const opts = parseArgs(process.argv.slice(2))
+ 
+   if (opts.command === 'db' && opts.positionals[0] === 'diff') {
+-    // `tinbase db diff [-f name]` — DDL for schema changes not yet in migrations
++    // `tinbase db diff [-f name]` - DDL for schema changes not yet in migrations
+     const project = await loadSupabaseProject(opts.dir)
+     const nativeLive =
+       opts.engine === 'native'
+@@ -179,7 +197,7 @@ async function main(): Promise<void> {
+   }
+ 
+   if (opts.command === 'db' && opts.positionals[0] === 'pull') {
+-    // `tinbase db pull [name]` — write the current schema delta as a migration
++    // `tinbase db pull [name]` - write the current schema delta as a migration
+     // and record it as already applied (so `start` won't re-run it)
+     const project = await loadSupabaseProject(opts.dir)
+     const nativeLive =
+@@ -204,7 +222,7 @@ async function main(): Promise<void> {
+   }
+ 
+   if (opts.command === 'inspect') {
+-    // `tinbase inspect` — per-table row counts and on-disk size
++    // `tinbase inspect` - per-table row counts and on-disk size
+     const project = await loadSupabaseProject(opts.dir)
+     const engine =
+       opts.engine === 'native' ? await createNativeEngine({ dataDir: join(opts.dir, '.tinbase', 'pgdata') }) : undefined
+@@ -233,7 +251,7 @@ async function main(): Promise<void> {
+       console.error(`unknown db subcommand: ${sub ?? '(none)'} (supported: reset, diff, pull)`)
+       process.exit(1)
+     }
+-    // `tinbase db reset` — wipe data + storage and re-run migrations + seed fresh
++    // `tinbase db reset` - wipe data + storage and re-run migrations + seed fresh
+     const dataDir = opts.dataDir ?? join(opts.dir, '.tinbase', opts.engine === 'native' ? 'pgdata' : 'db')
+     const storageDir = opts.storageDir || join(opts.dir, '.tinbase', 'storage')
+     await rm(dataDir, { recursive: true, force: true })
+@@ -257,13 +275,13 @@ async function main(): Promise<void> {
+       log: (m) => console.log(`  ${m}`),
+     })
+     const applied = await backend.db.listAppliedMigrations()
+-    console.log(`  reset complete — ${applied.length} migration(s) applied${project.seedSql ? ' + seed' : ''}`)
++    console.log(`  reset complete - ${applied.length} migration(s) applied${project.seedSql ? ' + seed' : ''}`)
+     await backend.close()
+     return
+   }
+ 
+   if (opts.command === 'gen') {
+-    // `tinbase gen types [typescript]` — emit a Supabase-shaped Database type to stdout
++    // `tinbase gen types [typescript]` - emit a Supabase-shaped Database type to stdout
+     const project = await loadSupabaseProject(opts.dir)
+     const backend = await createBackend({
+       migrations: project.migrations,
+@@ -311,11 +329,11 @@ async function main(): Promise<void> {
+     console.log('  ⚠ using an external Postgres (--database-url): treated as shared — bootstrap runs idempotently.')
+   }
+   if (opts.engine === 'pgmem') {
+-    console.log('  ⚠ pg-mem engine: in-memory subset — no RLS, cron, or pgmq (realtime is unfiltered) — local dev / preview only')
++    console.log('  ⚠ pg-mem engine: in-memory subset - no RLS, cron, or pgmq (realtime is unfiltered) - local dev / preview only')
+   }
+ 
+   // For `start`, pick a free port up front (skipping one already in use, e.g. a
+-  // tinbase already running) so the URL, keys, and siteUrl all reflect it —
++  // tinbase already running) so the URL, keys, and siteUrl all reflect it -
+   // instead of crashing later with EADDRINUSE.
+   let port = opts.port
+   if (opts.command === 'start') {
+@@ -328,7 +346,7 @@ async function main(): Promise<void> {
+       process.exit(1)
+     }
+     if (free !== opts.port) {
+-      console.log(`  ⚠ Port ${opts.port} is in use — starting on ${free} instead (use --port to choose).`)
++      console.log(`  ⚠ Port ${opts.port} is in use - starting on ${free} instead (use --port to choose).`)
+     }
+     port = free
+   }
+diff --git a/src/cron/service.ts b/src/cron/service.ts
+index f29e79a..f7b527e 100644
+--- a/src/cron/service.ts
++++ b/src/cron/service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * In-process scheduler that runs the jobs recorded in cron.job — the execution
++ * In-process scheduler that runs the jobs recorded in cron.job - the execution
+  * half of our pg_cron emulation (the cron.schedule()/unschedule() SQL functions
+  * live in db/emulated.ts). Supports standard 5-field cron expressions and
+  * pg_cron's "N seconds" form. Cron fields are matched in UTC, to match hosted
+@@ -16,6 +16,11 @@ interface JobRow {
+   active: boolean
+ }
+ 
++/**
++ * Polls cron.job on the tick interval and runs any due jobs as superuser,
++ * logging each run to cron.job_run_details - the execution half of the pg_cron
++ * emulation.
++ */
+ export class CronService {
+   private timer: ReturnType<typeof setInterval> | null = null
+   private lastRun = new Map<number, number>() // jobid → epoch ms of last run
+@@ -28,6 +33,7 @@ export class CronService {
+     private now: () => Date = () => new Date()
+   ) {}
+ 
++  /** Begin polling for due jobs on the tick interval; no-op if already running. */
+   start(): void {
+     if (this.timer) return
+     this.timer = setInterval(() => void this.tick(), this.tickMs)
+diff --git a/src/db/bootstrap.ts b/src/db/bootstrap.ts
+index 0ab3773..529deb6 100644
+--- a/src/db/bootstrap.ts
++++ b/src/db/bootstrap.ts
+@@ -1,13 +1,15 @@
+ /**
+- * Idempotent bootstrap SQL that shapes a fresh PGlite database like a
+- * Supabase project: roles, auth schema, storage schema, helper functions,
+- * migration bookkeeping, and the realtime CDC plumbing.
++ * Idempotent bootstrap SQL that shapes a fresh database like a Supabase
++ * project. Two variants: the full {@link BOOTSTRAP_SQL} for the real engines,
++ * and the reduced {@link MINIMAL_BOOTSTRAP_SQL} below for the pg-mem subset.
++ * Both are safe to re-run (create ... if not exists / create or replace).
+  */
++
+ /**
+  * Reduced bootstrap for subset engines (pg-mem) that can't run plpgsql, RLS
+  * policies, extensions, or LISTEN/NOTIFY. Just the schemas, core tables, and
+  * SQL-language auth helpers needed for the REST + auth CRUD surface. No RLS is
+- * enforced here — this path is for local-dev/preview only.
++ * enforced here - this path is for local-dev/preview only.
+  */
+ export const MINIMAL_BOOTSTRAP_SQL = `
+ create schema if not exists auth;
+@@ -145,6 +147,12 @@ create table if not exists supabase_migrations.seed_files (
+ );
+ `
+ 
++/**
++ * Full bootstrap for the real engines (PGlite / native embedded Postgres):
++ * extensions, the anon/authenticated/service_role roles, GoTrue-compatible auth
++ * schema, storage schema with default RLS policies, migration bookkeeping, and
++ * the realtime CDC + broadcast plumbing.
++ */
+ export const BOOTSTRAP_SQL = `
+ -- ── Extensions ─────────────────────────────────────────────────────────────
+ -- Supabase enables these by default and migrations lean on them
+@@ -165,7 +173,7 @@ begin
+ end $$;
+ 
+ -- uuid-ossp isn't in every Postgres build (it needs an external UUID lib at
+--- build time — e.g. the theseus Linux binaries omit it). uuid_generate_v4() is
++-- build time - e.g. the theseus Linux binaries omit it). uuid_generate_v4() is
+ -- the single most-used function from it, so shim it onto core gen_random_uuid()
+ -- (also a v4 UUID) whenever the real extension isn't present, so migrations
+ -- that call it work identically on every engine and platform.
+diff --git a/src/db/database.ts b/src/db/database.ts
+index 3e59aea..1d3e5b6 100644
+--- a/src/db/database.ts
++++ b/src/db/database.ts
+@@ -1,3 +1,10 @@
++/**
++ * The Database facade over a DbEngine: bootstraps a fresh database into a
++ * Supabase-shaped project, applies migrations/seeds the way the Supabase CLI
++ * does, introspects schema/functions (with caching), and drives the realtime
++ * CDC pipeline. Everything above the engine (REST, auth, storage, realtime)
++ * goes through this class.
++ */
+ import { BOOTSTRAP_SQL, MINIMAL_BOOTSTRAP_SQL } from './bootstrap.js'
+ import { PGMQ_SQL, CRON_SQL, NET_SQL, EXT_COMPAT_SQL, VAULT_SQL } from './emulated.js'
+ import { rewriteMigrationSql } from './sql-compat.js'
+@@ -10,14 +17,17 @@ import { createPgliteEngine } from './pglite-engine.js'
+ import type { DbEngine, EngineResults, EngineTx } from './engine.js'
+ import type { MigrationFile, RequestContext } from '../types.js'
+ 
++/** One column of an introspected table. */
+ export interface ColumnInfo {
+   name: string
++  /** underlying pg type name (pg_type.typname / information_schema.udt_name). */
+   udtName: string
+   isNullable: boolean
+   hasDefault: boolean
+   isPrimaryKey: boolean
+ }
+ 
++/** A foreign-key constraint, with source and target columns paired by position. */
+ export interface ForeignKey {
+   constraintName: string
+   srcSchema: string
+@@ -28,6 +38,7 @@ export interface ForeignKey {
+   tgtColumns: string[]
+ }
+ 
++/** An introspected table: its columns and primary-key column names. */
+ export interface TableInfo {
+   schema: string
+   name: string
+@@ -35,11 +46,13 @@ export interface TableInfo {
+   primaryKey: string[]
+ }
+ 
++/** One argument of a database function. */
+ export interface FunctionArg {
+   name: string
+   type: string
+ }
+ 
++/** An introspected database function (used to route RPC calls). */
+ export interface FunctionInfo {
+   schema: string
+   name: string
+@@ -50,23 +63,37 @@ export interface FunctionInfo {
+   args: FunctionArg[]
+ }
+ 
++/** Introspected shape of one schema: tables keyed by name, plus its foreign keys. */
+ export interface SchemaInfo {
+   tables: Map<string, TableInfo>
+   foreignKeys: ForeignKey[]
+ }
+ 
++/** A function that runs a parameterized query, e.g. one bound to a transaction. */
+ export type Querier = (sql: string, params?: unknown[]) => Promise<EngineResults>
+ 
++/**
++ * A change-data-capture event for one row, shaped like Supabase Realtime's
++ * `postgres_changes` payload. Emitted by the SQL trigger on the real engines
++ * and synthesized in JS on pg-mem (see {@link Database.emitCdc}).
++ */
+ export interface CdcEvent {
+   schema: string
+   table: string
+   type: 'INSERT' | 'UPDATE' | 'DELETE'
+   commit_timestamp: string
++  /** post-image; null on DELETE (and on a payload that was too large). */
+   record: Record<string, unknown> | null
++  /** pre-image; null on INSERT (and on a payload that was too large). */
+   old_record: Record<string, unknown> | null
++  /** set when the row was dropped from the payload, e.g. 'Payload too large'. */
+   errors?: string[]
+ }
+ 
++/**
++ * The database facade: wraps a {@link DbEngine} with bootstrap, migration
++ * application, schema introspection (cached), and the realtime CDC pipeline.
++ */
+ export class Database {
+   private schemaCache = new Map<string, SchemaInfo>()
+   private fnCache = new Map<string, FunctionInfo[]>()
+@@ -86,7 +113,7 @@ export class Database {
+       await engine.exec(MINIMAL_BOOTSTRAP_SQL)
+     } else {
+       await engine.exec(BOOTSTRAP_SQL)
+-      // emulated extensions (pgmq queues, cron, pg_net) — pure SQL, so
++      // emulated extensions (pgmq queues, cron, pg_net) - pure SQL, so
+       // pgmq.*/cron.*/net.* work with no C extension on either engine
+       await engine.exec(PGMQ_SQL)
+       await engine.exec(CRON_SQL)
+@@ -102,18 +129,19 @@ export class Database {
+     return new Database(engine)
+   }
+ 
+-  /** Superuser query — used by auth/storage internals and introspection. */
++  /** Superuser query - used by auth/storage internals and introspection. */
+   query<T = any>(sql: string, params?: unknown[]): Promise<EngineResults<T>> {
+     return this.engine.query<T>(sql, params)
+   }
+ 
++  /** Run one or more SQL statements with no params (superuser). */
+   exec(sql: string): Promise<unknown> {
+     return this.engine.exec(sql)
+   }
+ 
+   /**
+    * Run `fn` inside a transaction with the request's Postgres role and JWT
+-   * claims applied via SET LOCAL — this is what makes RLS behave exactly
++   * claims applied via SET LOCAL - this is what makes RLS behave exactly
+    * like hosted Supabase.
+    */
+   async withContext<T>(ctx: RequestContext, fn: (q: Querier) => Promise<T>): Promise<T> {
+@@ -129,6 +157,14 @@ export class Database {
+ 
+   // ── Migrations (Supabase CLI conventions) ────────────────────────────
+ 
++  /**
++   * Apply any not-yet-recorded migrations (in lexicographic version order) and
++   * an optional seed, each in its own transaction, then invalidate the schema
++   * cache. Returns the names of what was applied this run.
++   *
++   * @throws whatever a migration throws, except on the pg-mem engine where an
++   *   unsupported migration is skipped with a warning instead of aborting.
++   */
+   async runMigrations(migrations: MigrationFile[], seedSql?: string): Promise<string[]> {
+     const applied: string[] = []
+     const sorted = [...migrations].sort((a, b) => a.name.localeCompare(b.name))
+@@ -144,7 +180,7 @@ export class Database {
+           // The Supabase CLI applies each migration on a fresh connection, so a
+           // top-level `SET search_path TO ''` in one file never leaks to the next.
+           // tinbase runs every migration on one connection, so reset to the
+-          // default first — otherwise a hardened migration's search_path change
++          // default first - otherwise a hardened migration's search_path change
+           // breaks unqualified calls (e.g. gen_random_bytes) in later files.
+           await tx.exec(DEFAULT_SEARCH_PATH_SQL)
+           await tx.exec(rewriteMigrationSql(m.sql))
+@@ -190,7 +226,7 @@ export class Database {
+       }
+     }
+     if (applied.length > 0) {
+-      // a migration/seed may have left the session search_path at '' — restore
++      // a migration/seed may have left the session search_path at '' - restore
+       // the default so runtime queries resolve extension functions unqualified
+       await this.engine.exec(DEFAULT_SEARCH_PATH_SQL)
+       this.invalidateSchemaCache()
+@@ -198,6 +234,7 @@ export class Database {
+     return applied
+   }
+ 
++  /** Every migration recorded as applied, oldest version first. */
+   async listAppliedMigrations(): Promise<{ version: string; name: string | null }[]> {
+     const res = await this.engine.query<{ version: string; name: string | null }>(
+       `select version, name from supabase_migrations.schema_migrations order by version`
+@@ -207,6 +244,7 @@ export class Database {
+ 
+   // ── Introspection ────────────────────────────────────────────────────
+ 
++  /** Drop all cached introspection; call after any DDL changes the schema. */
+   invalidateSchemaCache(): void {
+     this.schemaCache.clear()
+     this.fnCache.clear()
+@@ -230,6 +268,7 @@ export class Database {
+     return set
+   }
+ 
++  /** Introspect a schema's tables, columns, PKs, and FKs. Cached per schema. */
+   async getSchemaInfo(schema: string): Promise<SchemaInfo> {
+     const cached = this.schemaCache.get(schema)
+     if (cached) return cached
+@@ -338,6 +377,10 @@ export class Database {
+     return info
+   }
+ 
++  /**
++   * All overloads of a function by schema + name (cached). Multiple rows mean
++   * the name is overloaded on argument types.
++   */
+   async getFunctions(schema: string, name: string): Promise<FunctionInfo[]> {
+     const key = `${schema}.${name}`
+     const cached = this.fnCache.get(key)
+@@ -372,6 +415,7 @@ export class Database {
+ 
+   // ── Realtime CDC ─────────────────────────────────────────────────────
+ 
++  /** Idempotently attach the CDC notify trigger to a table (real engines only). */
+   async ensureCdcTrigger(schema: string, table: string): Promise<void> {
+     const s = quoteIdent(schema)
+     const t = quoteIdent(table)
+@@ -393,6 +437,10 @@ export class Database {
+     `)
+   }
+ 
++  /**
++   * Register a CDC listener; the first call starts the single LISTEN on the
++   * shared `tinbase_cdc` channel. Returns an unsubscribe fn.
++   */
+   async onCdcEvent(cb: (e: CdcEvent) => void): Promise<() => void> {
+     this.cdcListeners.add(cb)
+     if (!this.cdcStarted) {
+@@ -402,7 +450,7 @@ export class Database {
+           const event = JSON.parse(payload) as CdcEvent
+           for (const listener of this.cdcListeners) listener(event)
+         } catch {
+-          // malformed payload — drop
++          // malformed payload - drop
+         }
+       })
+     }
+@@ -425,7 +473,7 @@ export class Database {
+    * triggers/NOTIFY (pg-mem). Called by the REST handler after a committed
+    * mutation, one event per affected row.
+    *
+-   * NOTE: these engines have no RLS, so events are delivered unfiltered — the
++   * NOTE: these engines have no RLS, so events are delivered unfiltered - the
+    * per-subscriber row check in the realtime layer is a no-op here.
+    */
+   emitCdc(
+@@ -446,6 +494,7 @@ export class Database {
+     }
+   }
+ 
++  /** Close the underlying engine and its connection. */
+   async close(): Promise<void> {
+     await this.engine.close()
+   }
+@@ -479,11 +528,16 @@ function parseIdentityArgs(identity: string): FunctionArg[] {
+   })
+ }
+ 
++/**
++ * Double-quote an identifier for safe interpolation into SQL.
++ * @throws if the name contains a NUL, which Postgres identifiers can't hold.
++ */
+ export function quoteIdent(name: string): string {
+   if (name.includes('\0')) throw new Error('invalid identifier')
+   return `"${name.replaceAll('"', '""')}"`
+ }
+ 
++/** Single-quote a string literal for safe interpolation into SQL. */
+ export function quoteLiteral(value: string): string {
+   return `'${value.replaceAll("'", "''")}'`
+ }
+diff --git a/src/db/emulated.ts b/src/db/emulated.ts
+index 240a990..1d475ee 100644
+--- a/src/db/emulated.ts
++++ b/src/db/emulated.ts
+@@ -10,6 +10,12 @@
+  */
+ 
+ // ── pgmq (message queue) ────────────────────────────────────────────────────
++
++/**
++ * Self-contained SQL emulation of the pgmq extension: per-queue `q_<name>` /
++ * `a_<name>` tables plus create/send/read/pop/delete/archive/etc functions,
++ * matching pgmq's signatures. No C extension, no background worker needed.
++ */
+ export const PGMQ_SQL = `
+ create schema if not exists pgmq;
+ grant usage on schema pgmq to anon, authenticated, service_role;
+@@ -118,10 +124,16 @@ grant execute on all functions in schema pgmq to anon, authenticated, service_ro
+ `
+ 
+ // ── cron (scheduled jobs) ────────────────────────────────────────────────────
++
++/**
++ * pg_cron emulation: the `cron.job` / `cron.job_run_details` tables and
++ * schedule/unschedule functions. This only records jobs; the in-process
++ * CronService (src/cron/service.ts) reads the table and runs them.
++ */
+ export const CRON_SQL = `
+ create schema if not exists cron;
+ -- cron.schedule executes arbitrary SQL as the (superuser) function owner, so it
+--- must stay restricted to service_role — matching hosted Supabase, where
++-- must stay restricted to service_role - matching hosted Supabase, where
+ -- authenticated cannot schedule jobs.
+ grant usage on schema cron to service_role;
+ 
+@@ -181,16 +193,18 @@ end $cron$;
+ grant execute on function cron.schedule(text,text,text), cron.schedule(text,text), cron.unschedule(text), cron.unschedule(bigint) to service_role;
+ `
+ 
+-// pg_net emulation — the `net.http_get/post/delete` SQL surface. The functions
+-// only enqueue into net.http_request_queue; the in-process NetService
+-// (src/net/service.ts) performs the HTTP and records the reply in
+-// net._http_response, exactly like pg_net's background worker. This lets the
+-// common Supabase pattern — a cron job that calls net.http_post to hit an Edge
+-// Function — run unchanged, with no C extension on either engine.
++/**
++ * pg_net emulation - the `net.http_get/post/delete` SQL surface. The functions
++ * only enqueue into net.http_request_queue; the in-process NetService
++ * (src/net/service.ts) performs the HTTP and records the reply in
++ * net._http_response, exactly like pg_net's background worker. This lets the
++ * common Supabase pattern - a cron job that calls net.http_post to hit an Edge
++ * Function - run unchanged, with no C extension on either engine.
++ */
+ export const NET_SQL = `
+ create schema if not exists net;
+ -- net.http_* can reach arbitrary URLs from the server (SSRF surface), so keep it
+--- restricted to service_role like hosted Supabase — not authenticated.
++-- restricted to service_role like hosted Supabase - not authenticated.
+ grant usage on schema net to service_role;
+ 
+ create table if not exists net.http_request_queue (
+@@ -263,11 +277,13 @@ end $net$;
+ grant execute on function net.http_get(text,jsonb,jsonb,int), net.http_post(text,jsonb,jsonb,jsonb,int), net.http_delete(text,jsonb,jsonb,int) to service_role;
+ `
+ 
+-// Small pure-SQL stand-ins for contrib extensions Supabase migrations lean on
+-// but which aren't in the PGlite / native builds. `moddatetime` (a BEFORE
+-// UPDATE trigger that stamps a timestamp column) is the common one — projects
+-// attach it as the updated_at trigger. Created only if absent, so a real
+-// extension (where present) still wins.
++/**
++ * Small pure-SQL stand-ins for contrib extensions Supabase migrations lean on
++ * but which aren't in the PGlite / native builds. `moddatetime` (a BEFORE
++ * UPDATE trigger that stamps a timestamp column) is the common one - projects
++ * attach it as the updated_at trigger. Created only if absent, so a real
++ * extension (where present) still wins.
++ */
+ export const EXT_COMPAT_SQL = `
+ create schema if not exists extensions;
+ do $ensure_moddatetime$
+@@ -291,16 +307,18 @@ end
+ $ensure_moddatetime$;
+ `
+ 
+-// Supabase Vault emulation. Real Vault (supabase_vault + pgsodium) encrypts
+-// secrets at rest; we can't ship those C extensions. This stand-in keeps the
+-// same surface (vault.secrets, vault.decrypted_secrets, vault.create_secret /
+-// update_secret) but stores the secret encrypted with pgcrypto's authenticated
+-// symmetric encryption (pgp_sym_encrypt) under a key held in the GUC
+-// app.settings.vault_key — set at boot, never stored in the database.
+-//
+-// The stored `secret` column holds ciphertext; decrypted_secrets decrypts on
+-// read. If pgcrypto or the key is unavailable the functions raise, rather than
+-// silently falling back to cleartext.
++/**
++ * Supabase Vault emulation. Real Vault (supabase_vault + pgsodium) encrypts
++ * secrets at rest; we can't ship those C extensions. This stand-in keeps the
++ * same surface (vault.secrets, vault.decrypted_secrets, vault.create_secret /
++ * update_secret) but stores the secret encrypted with pgcrypto's authenticated
++ * symmetric encryption (pgp_sym_encrypt) under a key held in the GUC
++ * app.settings.vault_key, set at boot and never stored in the database.
++ *
++ * SECURITY: the stored `secret` column holds ciphertext; decrypted_secrets
++ * decrypts on read. If pgcrypto or the key is unavailable the functions raise,
++ * rather than silently falling back to cleartext.
++ */
+ export const VAULT_SQL = `
+ create schema if not exists vault;
+ grant usage on schema vault to service_role;
+diff --git a/src/db/engine.ts b/src/db/engine.ts
+index 55b47e3..fda4559 100644
+--- a/src/db/engine.ts
++++ b/src/db/engine.ts
+@@ -1,30 +1,42 @@
+ /**
+  * Database engine abstraction. Two implementations:
+- *  - PGlite (WASM Postgres) — portable, runs in the browser; heavier RAM.
+- *  - Native embedded Postgres (Node only) — PocketBase-class footprint.
++ *  - PGlite (WASM Postgres): portable, runs in the browser; heavier RAM.
++ *  - Native embedded Postgres (Node only): PocketBase-class footprint.
+  * The rest of tinbase only talks to this interface.
+  */
+ 
++/** Result of a query: returned rows plus, for writes, the affected row count. */
+ export interface EngineResults<T = any> {
++  /** result rows, typed as `T` */
+   rows: T[]
++  /** rows touched by an INSERT/UPDATE/DELETE; undefined for plain SELECTs */
+   affectedRows?: number
+ }
+ 
++/** Handle passed to a transaction callback; scoped to the open transaction. */
+ export interface EngineTx {
++  /** run a parameterized query within the transaction */
+   query<T = any>(sql: string, params?: unknown[]): Promise<EngineResults<T>>
++  /** run one or more statements within the transaction (no params) */
+   exec(sql: string): Promise<void>
+ }
+ 
++/**
++ * The single database interface the rest of tinbase talks to, regardless of
++ * whether it's backed by PGlite, native embedded Postgres, or the pg-mem subset.
++ */
+ export interface DbEngine {
+   /** true for subset engines (pg-mem) that can't run the full plpgsql/RLS bootstrap */
+   minimalBootstrap?: boolean
++  /** run a parameterized query */
+   query<T = any>(sql: string, params?: unknown[]): Promise<EngineResults<T>>
+-  /** Run multiple SQL statements (no params). */
++  /** run multiple SQL statements (no params) */
+   exec(sql: string): Promise<void>
+-  /** Serialized transaction — implementations must guarantee mutual exclusion. */
++  /** serialized transaction; implementations must guarantee mutual exclusion */
+   transaction<T>(fn: (tx: EngineTx) => Promise<T>): Promise<T>
+-  /** Subscribe to pg_notify on a channel. Returns unsubscribe. */
++  /** subscribe to pg_notify on a channel; returns an unsubscribe function */
+   listen(channel: string, cb: (payload: string) => void): Promise<() => void>
++  /** close the underlying connection/instance */
+   close(): Promise<void>
+ }
+ 
+@@ -32,6 +44,7 @@ export interface DbEngine {
+ export class Mutex {
+   private tail: Promise<void> = Promise.resolve()
+ 
++  /** Acquire the lock; await the returned release fn's turn, then call it to free it. */
+   async lock(): Promise<() => void> {
+     let release!: () => void
+     const next = new Promise<void>((r) => (release = r))
+@@ -41,6 +54,7 @@ export class Mutex {
+     return release
+   }
+ 
++  /** Run `fn` while holding the lock; releases even if `fn` throws. */
+   async run<T>(fn: () => Promise<T>): Promise<T> {
+     const release = await this.lock()
+     try {
+diff --git a/src/db/inspect.ts b/src/db/inspect.ts
+index 70de93b..65fd26f 100644
+--- a/src/db/inspect.ts
++++ b/src/db/inspect.ts
+@@ -1,17 +1,22 @@
+ /**
+- * `tinbase inspect` core: a lightweight database report — per-table row counts
++ * `tinbase inspect` core: a lightweight database report - per-table row counts
+  * and on-disk size for a schema. Like a tiny `supabase inspect db`, enough to
+  * eyeball what's in a local project. (Uses pg_total_relation_size, so it runs
+  * on the real-Postgres engines, not the pg-mem subset.)
+  */
+ import { quoteIdent, type Database } from './database.js'
+ 
++/** One row of the inspect report: a table with its row count and on-disk size. */
+ export interface TableInfo {
++  /** table name (unqualified) */
+   table: string
++  /** live row count from count(*) */
+   rows: number
++  /** human-readable total relation size (pg_size_pretty) */
+   size: string
+ }
+ 
++/** Report per-table row counts and on-disk sizes for a schema, largest first. */
+ export async function inspectDb(db: Database, schema = 'public'): Promise<TableInfo[]> {
+   const tables = await db.query<{ table: string; size: string }>(
+     `select c.relname as table,
+diff --git a/src/db/pglite-engine.ts b/src/db/pglite-engine.ts
+index b110775..ce2eea5 100644
+--- a/src/db/pglite-engine.ts
++++ b/src/db/pglite-engine.ts
+@@ -1,6 +1,12 @@
+-/** PGlite (WASM) engine — imported dynamically so native mode never loads the WASM bundle. */
++/** PGlite (WASM) engine - imported dynamically so native mode never loads the WASM bundle. */
+ import type { DbEngine, EngineResults, EngineTx } from './engine.js'
+ 
++/**
++ * Build a {@link DbEngine} backed by PGlite (WASM Postgres) at `dataDir`, or an
++ * in-memory database when `dataDir` is omitted. Loads the bundled contrib
++ * extensions Supabase enables by default.
++ * @throws if the PGlite WASM bundle isn't available in this build (use the native engine instead).
++ */
+ export async function createPgliteEngine(dataDir?: string): Promise<DbEngine> {
+   let PGlite, extensions
+   try {
+@@ -20,7 +26,7 @@ export async function createPgliteEngine(dataDir?: string): Promise<DbEngine> {
+   } catch (e) {
+     if (e instanceof Error && /wasm/.test(e.message)) throw e
+     throw new Error(
+-      'the PGlite (wasm) engine is not available in this build — run with --engine native'
++      'the PGlite (wasm) engine is not available in this build - run with --engine native'
+     )
+   }
+   const pg = new PGlite({ dataDir, extensions })
+diff --git a/src/db/pgmem-engine.ts b/src/db/pgmem-engine.ts
+index 03b63df..5789f98 100644
+--- a/src/db/pgmem-engine.ts
++++ b/src/db/pgmem-engine.ts
+@@ -1,5 +1,5 @@
+ /**
+- * pg-mem engine — an ultralight, pure-JS, in-memory Postgres *subset* for
++ * pg-mem engine - an ultralight, pure-JS, in-memory Postgres *subset* for
+  * local dev / previews (RapidNative) where footprint matters more than full
+  * fidelity. A ~3.6 MB install with no WASM, vs PGlite's ~600 MB heap.
+  *
+@@ -7,11 +7,11 @@
+  * embeds, count), email/password auth, edge functions, realtime
+  * (broadcast/presence + postgres_changes), and database webhooks. Because
+  * pg-mem has no triggers/LISTEN/NOTIFY, change events for realtime and webhooks
+- * are synthesized in JS by the REST layer (see Database.emitCdc) — every write
++ * are synthesized in JS by the REST layer (see Database.emitCdc) - every write
+  * goes through it in-process.
+  *
+  * What's explicitly NOT here (it is a subset, not a faithful Postgres):
+- *   - NO row-level security (policies are skipped; RLS is not enforced) — so
++ *   - NO row-level security (policies are skipped; RLS is not enforced) - so
+  *     realtime/webhook events are delivered UNFILTERED, not per-subscriber
+  *   - NO PL/pgSQL functions, pgmq, or cron
+  *   - reduced introspection; UPDATE change events carry no old_record
+@@ -24,7 +24,7 @@ import { Mutex } from './engine.js'
+ /**
+  * Split SQL into statements on top-level `;`. Respects $tag$…$tag$ dollar-quoted
+  * blocks, '…' string literals ('' escapes), "…" quoted identifiers, and both
+- * -- line and /* block *​/ comments — so a `;` inside any of those never splits.
++ * -- line and /* block *​/ comments - so a `;` inside any of those never splits.
+  */
+ function splitStatements(sql: string): string[] {
+   const out: string[] = []
+@@ -116,18 +116,24 @@ function isSkippable(stmt: string): boolean {
+   )
+ }
+ 
++/**
++ * Build the pg-mem subset {@link DbEngine}: an in-memory Postgres for local dev
++ * and previews. Reports `minimalBootstrap: true` so the caller runs the reduced
++ * bootstrap and synthesizes CDC in JS.
++ * @throws if the optional `pg-mem` dependency isn't installed.
++ */
+ export async function createPgmemEngine(): Promise<DbEngine> {
+   let newDb, DataType
+   try {
+     ;({ newDb, DataType } = await import('pg-mem'))
+   } catch {
+-    throw new Error('the pg-mem engine requires the optional `pg-mem` dependency — run `npm install pg-mem`')
++    throw new Error('the pg-mem engine requires the optional `pg-mem` dependency - run `npm install pg-mem`')
+   }
+ 
+   const db = newDb({ autoCreateForeignKeyIndices: true })
+ 
+   // functions our REST/bootstrap SQL needs that pg-mem lacks
+-  // impure: true so pg-mem evaluates them per row (not once per statement) —
++  // impure: true so pg-mem evaluates them per row (not once per statement) -
+   // otherwise every row in a multi-row insert gets the same UUID → PK collision
+   db.public.registerFunction({ name: 'gen_random_uuid', returns: DataType.uuid, impure: true, implementation: () => crypto.randomUUID() })
+   db.public.registerFunction({ name: 'uuid_generate_v4', returns: DataType.uuid, impure: true, implementation: () => crypto.randomUUID() })
+@@ -170,7 +176,7 @@ export async function createPgmemEngine(): Promise<DbEngine> {
+ 
+   /**
+    * Tolerant exec: run statements one at a time and skip the ones a real
+-   * Supabase migration contains that pg-mem can't do — RLS policies, plpgsql
++   * Supabase migration contains that pg-mem can't do - RLS policies, plpgsql
+    * functions/triggers, extensions, grants. Genuine errors on supported DDL
+    * still throw. Skipped statements are logged so nothing silently vanishes.
+    */
+@@ -202,7 +208,7 @@ export async function createPgmemEngine(): Promise<DbEngine> {
+         // pg-mem is single-connection in-memory; serialize and use a snapshot so
+         // a thrown fn rolls back. Note: pg-mem commits DDL immediately and cannot
+         // restore a snapshot once the schema changed, so a rollback attempt after
+-        // DDL may itself fail — swallow that and surface the ORIGINAL error.
++        // DDL may itself fail - swallow that and surface the ORIGINAL error.
+         const restore = db.backup()
+         try {
+           return await fn(tx)
+@@ -210,12 +216,12 @@ export async function createPgmemEngine(): Promise<DbEngine> {
+           try {
+             restore.restore()
+           } catch {
+-            // schema changed since backup (DDL ran) — can't roll back in-memory; ignore
++            // schema changed since backup (DDL ran) - can't roll back in-memory; ignore
+           }
+           throw e
+         }
+       }),
+-    // no LISTEN/NOTIFY in pg-mem — realtime/webhooks simply don't fire
++    // no LISTEN/NOTIFY in pg-mem - realtime/webhooks simply don't fire
+     listen: async () => () => {},
+     close: async () => {
+       await client.end()
+diff --git a/src/db/schema-diff.ts b/src/db/schema-diff.ts
+index c49db1c..e9f1d8f 100644
+--- a/src/db/schema-diff.ts
++++ b/src/db/schema-diff.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Schema snapshot + diff — the engine behind `tinbase db diff`.
++ * Schema snapshot + diff - the engine behind `tinbase db diff`.
+  *
+  * Snapshots a schema (tables, columns, constraints, indexes, enums) into a
+  * structured form, then emits the DDL to turn one snapshot into another. Used
+@@ -9,30 +9,39 @@
+  * Covered: enums (create + add value), tables (create/drop), columns
+  * (add/drop/alter type/nullability/default), and named constraints + indexes
+  * (add/drop by definition). Not yet diffed: functions, triggers, policies,
+- * views — noted so the output never silently claims completeness.
++ * views - noted so the output never silently claims completeness.
+  */
+ import { quoteIdent } from './database.js'
+ import type { Database } from './database.js'
+ 
+ interface ColumnSnap {
+   name: string
++  /** fully-specified type from format_type (e.g. `character varying(255)`) */
+   type: string
+   nullable: boolean
++  /** column default expression, or null when none */
+   default: string | null
+ }
+ interface TableSnap {
+   name: string
+   columns: Map<string, ColumnSnap>
++  /** column names in declaration order, so DDL is emitted deterministically */
+   order: string[]
+ }
++
++/** A structured snapshot of one schema, diffable into DDL by {@link diffSchemas}. */
+ export interface SchemaSnapshot {
++  /** table name → its columns */
+   tables: Map<string, TableSnap>
+-  /** constraint/index name → definition, keyed by table */
++  /** table → (constraint name → definition from pg_get_constraintdef) */
+   constraints: Map<string, Map<string, string>>
++  /** table → (index name → definition from pg_get_indexdef), excluding constraint-backing indexes */
+   indexes: Map<string, Map<string, string>>
++  /** enum type name → its labels in sort order */
+   enums: Map<string, string[]>
+ }
+ 
++/** Snapshot a schema's tables, columns, constraints, indexes, and enums. */
+ export async function snapshotSchema(db: Database, schema = 'public'): Promise<SchemaSnapshot> {
+   const cols = await db.query<{ table: string; column: string; type: string; nullable: boolean; default: string | null }>(
+     `select c.relname as table, a.attname as column,
+@@ -157,6 +166,7 @@ export function diffSchemas(from: SchemaSnapshot, to: SchemaSnapshot, schema = '
+   }
+ 
+   // ── dropped tables ──
++
+   for (const name of from.tables.keys()) {
+     if (!to.tables.has(name)) out.push(`drop table ${tbl(name)};`)
+   }
+diff --git a/src/db/sql-compat.ts b/src/db/sql-compat.ts
+index ace13f0..75ec4d9 100644
+--- a/src/db/sql-compat.ts
++++ b/src/db/sql-compat.ts
+@@ -3,7 +3,7 @@
+  *
+  * tinbase can't install C extensions (pg_cron, pg_net, http, supabase_vault,
+  * hypopg, …) into the PGlite or embedded-native Postgres build, and several of
+- * them are emulated in pure SQL instead (cron, pg_net, pgmq — see
++ * them are emulated in pure SQL instead (cron, pg_net, pgmq - see
+  * db/emulated.ts). A real Supabase project's first migration typically runs a
+  * batch of `CREATE EXTENSION` statements; on stock Postgres a missing one
+  * aborts the whole migration with `extension "…" is not available`.
+@@ -19,7 +19,7 @@
+  * migration inside a transaction (for atomicity + rollback), and
+  * `CREATE/DROP INDEX CONCURRENTLY` / `REINDEX … CONCURRENTLY` are illegal in a
+  * transaction block. On a single-connection local dev database CONCURRENTLY
+- * buys nothing over a plain index, so we drop the keyword — the resulting index
++ * buys nothing over a plain index, so we drop the keyword - the resulting index
+  * is identical.
+  *
+  * The scan is quote/comment-aware so it never touches these keywords when they
+diff --git a/src/functions/deno-shim.ts b/src/functions/deno-shim.ts
+index 88fc56c..3e12772 100644
+--- a/src/functions/deno-shim.ts
++++ b/src/functions/deno-shim.ts
+@@ -10,7 +10,7 @@
+  * injected SUPABASE_* vars and declared function secrets (never the host
+  * process.env).
+  *
+- * Not resolved: `npm:` / `jsr:` / URL import specifiers and the Deno std lib —
++ * Not resolved: `npm:` / `jsr:` / URL import specifiers and the Deno std lib -
+  * a function using those needs a bundling step. Functions that stick to Web
+  * APIs (fetch/Request/Response) + Deno.serve/Deno.env work as-is.
+  */
+@@ -28,7 +28,7 @@ export function setDenoEnv(env: Record<string, string>): void {
+ export function installDenoShim(): void {
+   const g = globalThis as Record<string, unknown> & { Deno?: unknown; __tinbaseDeno?: boolean }
+   if (g.__tinbaseDeno) return
+-  // a real Deno runtime already provides Deno.serve — don't clobber it
++  // a real Deno runtime already provides Deno.serve - don't clobber it
+   if (g.Deno && typeof (g.Deno as { serve?: unknown }).serve === 'function') return
+   g.__tinbaseDeno = true
+   g.Deno = {
+@@ -69,6 +69,7 @@ export function takeCapturedHandler(): DenoHandler | undefined {
+   return h
+ }
+ 
++/** Clear any handler captured by Deno.serve(), without returning it. */
+ export function resetCapturedHandler(): void {
+   captured.handler = undefined
+ }
+diff --git a/src/functions/handler.ts b/src/functions/handler.ts
+index df24cdc..4fc644c 100644
+--- a/src/functions/handler.ts
++++ b/src/functions/handler.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Edge Functions (/functions/v1/*) — supabase.functions.invoke() support.
++ * Edge Functions (/functions/v1/*) - supabase.functions.invoke() support.
+  *
+  * A "function" is any fetch handler: (Request) => Response | Promise<Response>.
+  * The core takes a name → handler map (portable, works in the browser); the
+@@ -8,13 +8,14 @@
+  */
+ import type { RequestContext } from '../types.js'
+ 
++/** An edge function: a fetch handler invoked with the resolved request context. */
+ export type EdgeFunction = (req: Request, ctx: FunctionContext) => Response | Promise<Response>
+ 
++/** Second argument passed to every {@link EdgeFunction} invocation. */
+ export interface FunctionContext {
+-  /** Verified request context (role + JWT claims) resolved by the router. */
++  /** verified request context (role + JWT claims) resolved by the router */
+   auth: RequestContext
+-  /** Keys/urls so the function can create its own supabase-js client, plus any
+-   * secrets loaded from supabase/functions/.env. */
++  /** keys/urls so the function can create its own supabase-js client, plus any secrets loaded from supabase/functions/.env */
+   env: {
+     SUPABASE_URL: string
+     SUPABASE_ANON_KEY: string
+@@ -23,20 +24,24 @@ export interface FunctionContext {
+   }
+ }
+ 
++/** Registry and dispatcher for edge functions, backing supabase.functions.invoke(). */
+ export class FunctionsHandler {
+   constructor(
+     private functions: Map<string, EdgeFunction>,
+     private env: FunctionContext['env']
+   ) {}
+ 
++  /** Register (or replace) a function under `name`, served at /functions/v1/<name>. */
+   register(name: string, fn: EdgeFunction): void {
+     this.functions.set(name, fn)
+   }
+ 
++  /** Names of all registered functions. */
+   list(): string[] {
+     return [...this.functions.keys()]
+   }
+ 
++  /** Dispatch a /functions/v1/<name> request to its handler, returning a 404 when unknown and a 500 when the handler throws or returns a non-Response. */
+   async handle(req: Request, ctx: RequestContext, url: URL): Promise<Response> {
+     const name = url.pathname.replace(/^\/functions\/v1\/?/, '').split('/')[0]
+     if (!name) {
+diff --git a/src/gen-types.ts b/src/gen-types.ts
+index 8bd5b1c..f3e77a1 100644
+--- a/src/gen-types.ts
++++ b/src/gen-types.ts
+@@ -40,6 +40,11 @@ interface FnRow {
+ 
+ const JSON_TYPE = 'Json'
+ 
++/**
++ * Emit the `Database` type source (see module header) for one schema of the
++ * live database. Reads columns, enums, functions, and foreign keys, then formats
++ * them into the Supabase-shaped type text ready to write to a .d.ts.
++ */
+ export async function generateTypes(db: Database, schema = 'public'): Promise<string> {
+   const enums = await loadEnums(db, schema)
+   const enumNames = new Set(enums.map((e) => e.name))
+diff --git a/src/index.ts b/src/index.ts
+index f524fda..0bb3221 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,5 +1,5 @@
+ /**
+- * tinbase — a pure-JS, Docker-free Supabase backend on PGlite that speaks
++ * tinbase - a pure-JS, Docker-free Supabase backend on PGlite that speaks
+  * the same wire protocols as hosted Supabase, so the official supabase-js
+  * SDK works unchanged.
+  *
+@@ -45,20 +45,34 @@ export { RetentionService, type RetentionConfig } from './retention/service.js'
+ export { snapshotSchema, diffSchemas, type SchemaSnapshot } from './db/schema-diff.js'
+ export { inspectDb, type TableInfo } from './db/inspect.js'
+ 
++/**
++ * A running tinbase backend. The one field a consumer always needs is
++ * {@link TinbaseBackend.fetch}; the rest expose the underlying services for
++ * advanced/embedded use (in-process realtime, manual migrations, log access).
++ * Returned by {@link createBackend}.
++ */
+ export interface TinbaseBackend {
+   /** The whole backend as a fetch handler. Pass to supabase-js as global.fetch for in-process use. */
+   fetch: (req: Request) => Promise<Response>
++  /** The database engine wrapper - run raw SQL, inspect schema, apply migrations. */
+   db: Database
++  /** Realtime (Postgres CDC → WebSocket) engine backing supabase.channel(). */
+   realtime: RealtimeEngine
++  /** Edge-function registry/dispatcher backing supabase.functions.invoke(). */
+   functions: FunctionsHandler
++  /** Database-webhook service (HTTP requests fired on row changes). */
+   webhooks: WebhooksService
++  /** pg_cron emulation scheduler. */
+   cron: CronService
++  /** pg_net emulation sender (net.http_* queue drain). */
+   net: NetService
++  /** Background sweeper that purges expired tokens and aged-out audit rows. */
+   retention: RetentionService
+-  /** JWT for the anon role — use as supabase-js's supabaseKey. */
++  /** JWT for the anon role - use as supabase-js's supabaseKey. */
+   anonKey: string
+-  /** JWT for the service_role — bypasses RLS. */
++  /** JWT for the service_role - bypasses RLS. */
+   serviceRoleKey: string
++  /** Secret used to sign/verify every JWT (the resolved value, incl. the default). */
+   jwtSecret: string
+   /** Recent server logs (also surfaced in the Studio Logs pane). */
+   logs: LogBuffer
+@@ -66,6 +80,7 @@ export interface TinbaseBackend {
+   inbox: InboxMailer | null
+   /** Apply additional migrations at runtime. */
+   migrate: (migrations: MigrationFile[], seedSql?: string) => Promise<string[]>
++  /** Tear down every background service and close the database. Idempotent-safe to await once. */
+   close: () => Promise<void>
+ }
+ 
+@@ -78,6 +93,16 @@ const CORS_HEADERS: Record<string, string> = {
+   'access-control-max-age': '86400',
+ }
+ 
++/**
++ * Build a running tinbase backend from {@link BackendConfig}. Wires the
++ * database, auth, storage, realtime, edge functions, and the background
++ * services (webhooks/cron/net/retention), mints the anon/service_role keys, and
++ * returns a {@link TinbaseBackend} whose `fetch` handles every Supabase wire
++ * route.
++ *
++ * All config is optional: with an empty config it boots an in-memory PGlite
++ * backend on the Supabase local-dev defaults.
++ */
+ export async function createBackend(config: BackendConfig = {}): Promise<TinbaseBackend> {
+   const jwtSecret = config.jwtSecret ?? DEFAULT_JWT_SECRET
+   const siteUrl = config.siteUrl ?? 'http://localhost:54321'
+@@ -122,7 +147,7 @@ export async function createBackend(config: BackendConfig = {}): Promise<Tinbase
+   // at /inbox) and log a metadata-only line. A provided mailer takes over and no
+   // inbox is mounted.
+   //
+-  // The server log records only the recipient and subject — never the body,
++  // The server log records only the recipient and subject - never the body,
+   // which carries OTP codes and magic links. Set logMailBody: true to also log
+   // the full body for local debugging (the /inbox UI always shows it in full).
+   const inbox = config.mailer
+@@ -337,6 +362,7 @@ export async function createBackend(config: BackendConfig = {}): Promise<Tinbase
+   }
+ }
+ 
++/** Add the permissive CORS headers to a response, leaving any already-set header untouched. */
+ function withCors(res: Response): Response {
+   for (const [k, v] of Object.entries(CORS_HEADERS)) {
+     if (!res.headers.has(k)) res.headers.set(k, v)
+diff --git a/src/jwt.ts b/src/jwt.ts
+index 466b0f2..1b29ec4 100644
+--- a/src/jwt.ts
++++ b/src/jwt.ts
+@@ -1,6 +1,6 @@
+ /**
+  * Minimal HS256 JWT implementation on WebCrypto.
+- * Works in Node (>=18) and browsers — no dependencies.
++ * Works in Node (>=18) and browsers - no dependencies.
+  */
+ 
+ const encoder = new TextEncoder()
+@@ -34,6 +34,7 @@ async function hmacKey(secret: string, usage: KeyUsage): Promise<CryptoKey> {
+   )
+ }
+ 
++/** Standard + Supabase/GoTrue claims carried in an access token. Open-ended: any extra claims are preserved. */
+ export interface JwtClaims {
+   [key: string]: unknown
+   sub?: string
+@@ -49,6 +50,7 @@ export interface JwtClaims {
+   amr?: { method: string; timestamp: number }[]
+ }
+ 
++/** Sign claims as an HS256 JWT. */
+ export async function signJwt(claims: JwtClaims, secret: string): Promise<string> {
+   const header = bytesToBase64Url(encoder.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })))
+   const payload = bytesToBase64Url(encoder.encode(JSON.stringify(claims)))
+@@ -64,7 +66,7 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtClaim
+   if (parts.length !== 3) return null
+   const [header, payload, signature] = parts
+   try {
+-    // Pin the algorithm to HS256 — reject alg:"none" and any alg-swap attempt
++    // Pin the algorithm to HS256 - reject alg:"none" and any alg-swap attempt
+     // rather than relying on the HMAC verify to fail.
+     const head = JSON.parse(decoder.decode(base64UrlToBytes(header))) as { alg?: string; typ?: string }
+     if (head.alg !== 'HS256') return null
+@@ -95,6 +97,7 @@ export function decodeJwt(token: string): JwtClaims | null {
+   }
+ }
+ 
++/** A URL-safe random token (base64url of `bytes` CSPRNG bytes). Used for refresh/one-time/link tokens. */
+ export function randomToken(bytes = 32): string {
+   const buf = new Uint8Array(bytes)
+   crypto.getRandomValues(buf)
+diff --git a/src/log-buffer.ts b/src/log-buffer.ts
+index b810161..fe17b60 100644
+--- a/src/log-buffer.ts
++++ b/src/log-buffer.ts
+@@ -1,21 +1,26 @@
+ /**
+  * In-memory ring buffer of recent server log lines, surfaced in the Studio
+  * "Logs" pane (and available as backend.logs). Captures request lines and the
+- * internal log() output (migrations, mail, webhooks, cron). Dev convenience —
++ * internal log() output (migrations, mail, webhooks, cron). Dev convenience -
+  * bounded, never persisted.
+  */
++/** Severity derived from response status (or passed explicitly by internal log calls). */
+ export type LogLevel = 'info' | 'warn' | 'error'
+ 
++/** One buffered log line. */
+ export interface LogEntry {
++  /** ISO timestamp when pushed. */
+   ts: string
+   level: LogLevel
+   msg: string
+ }
+ 
++/** Bounded FIFO of the most recent {@link LogEntry} lines; oldest are dropped past `cap`. */
+ export class LogBuffer {
+   private entries: LogEntry[] = []
+   constructor(private cap = 500) {}
+ 
++  /** Append a line, evicting the oldest once over capacity. */
+   push(msg: string, level: LogLevel = 'info'): void {
+     this.entries.push({ ts: new Date().toISOString(), level, msg })
+     if (this.entries.length > this.cap) this.entries.splice(0, this.entries.length - this.cap)
+@@ -26,6 +31,7 @@ export class LogBuffer {
+     return this.entries.slice(-limit).reverse()
+   }
+ 
++  /** Drop all buffered lines. */
+   clear(): void {
+     this.entries = []
+   }
+diff --git a/src/net/service.ts b/src/net/service.ts
+index 69708f8..804cdae 100644
+--- a/src/net/service.ts
++++ b/src/net/service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * In-process HTTP sender for the pg_net emulation — the execution half of the
++ * In-process HTTP sender for the pg_net emulation - the execution half of the
+  * net.* surface (the net.http_get/post/delete SQL functions live in
+  * db/emulated.ts). It drains net.http_request_queue, performs each request with
+  * fetch, and records the reply in net._http_response, mirroring pg_net's
+@@ -58,15 +58,25 @@ interface RequestRow {
+   timeout_milliseconds: number
+ }
+ 
++/** Outcome of one drained request, passed to the optional `onDeliver` callback. */
+ export interface NetDelivery {
++  /** net.http_request_queue row id */
+   id: number
+   method: string
+   url: string
++  /** response status; undefined when the request failed before a reply */
+   status?: number
++  /** true if the request aborted on its timeout */
+   timedOut: boolean
++  /** failure reason (network error, blocked target, etc.); undefined on success */
+   error?: string
+ }
+ 
++/**
++ * Drains net.http_request_queue on an interval, performs each request, and
++ * records the reply in net._http_response - the pg_net background worker,
++ * in-process.
++ */
+ export class NetService {
+   private timer: ReturnType<typeof setInterval> | null = null
+   private draining = false
+@@ -79,6 +89,7 @@ export class NetService {
+     private onDeliver?: (d: NetDelivery) => void
+   ) {}
+ 
++  /** Begin draining the queue on the tick interval; no-op if already running. */
+   start(): void {
+     if (this.timer) return
+     this.timer = setInterval(() => void this.tick(), this.tickMs)
+@@ -92,7 +103,7 @@ export class NetService {
+ 
+   /** Drain any queued requests once (also callable directly in tests). */
+   async tick(): Promise<void> {
+-    if (this.draining) return // never overlap drains — one writer at a time
++    if (this.draining) return // never overlap drains - one writer at a time
+     this.draining = true
+     try {
+       let rows: RequestRow[]
+diff --git a/src/node/bun-server.ts b/src/node/bun-server.ts
+index 9d28e37..1ee1cca 100644
+--- a/src/node/bun-server.ts
++++ b/src/node/bun-server.ts
+@@ -1,6 +1,6 @@
+ /**
+  * Bun-native server: Bun.serve with first-class WebSockets. Used automatically
+- * when the CLI runs under Bun (including single-binary builds) — same backend,
++ * when the CLI runs under Bun (including single-binary builds) - same backend,
+  * same RealtimeSocketLike contract as the node:http path.
+  */
+ import type { SupaliteBackendShape } from './server-shared.js'
+@@ -8,11 +8,14 @@ import type { RunningServer, ServeOptions } from './server.js'
+ 
+ declare const Bun: any
+ 
++/** Per-connection state Bun carries through the websocket lifecycle callbacks. */
+ interface WsData {
+   vsn: string
++  /** Realtime session, created on `open` and driven by `message`/`close`. */
+   session?: { onMessage: (data: string | Uint8Array) => void; onClose: () => void }
+ }
+ 
++/** Bun equivalent of {@link import('./server.js').serve}; same backend contract. */
+ export async function serveBun(backend: SupaliteBackendShape, opts: ServeOptions = {}): Promise<RunningServer> {
+   const host = opts.host ?? '127.0.0.1'
+ 
+diff --git a/src/node/bundle-function.ts b/src/node/bundle-function.ts
+index dcc6184..5c71db2 100644
+--- a/src/node/bundle-function.ts
++++ b/src/node/bundle-function.ts
+@@ -16,7 +16,7 @@ import { existsSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ 
+-/** Map a Deno-style specifier to a fetchable URL. Pure — unit tested. */
++/** Map a Deno-style specifier to a fetchable URL. Pure - unit tested. */
+ export function rewriteRemoteSpecifier(spec: string): string {
+   if (spec.startsWith('npm:')) return `https://esm.sh/${spec.slice(4)}`
+   if (spec.startsWith('jsr:')) return `https://esm.sh/jsr/${spec.slice(4)}`
+diff --git a/src/node/db-diff.ts b/src/node/db-diff.ts
+index ee73a4c..925958a 100644
+--- a/src/node/db-diff.ts
++++ b/src/node/db-diff.ts
+@@ -12,17 +12,23 @@ import { createBackend, type TinbaseBackend } from '../index.js'
+ import { snapshotSchema, diffSchemas } from '../db/schema-diff.js'
+ import type { MigrationFile } from '../types.js'
+ 
++/** Inputs for {@link computeDbDiff}: how to reach the live db plus the migrations that define the shadow. */
+ export interface DbDiffOptions {
+   /** the live project's data dir (wasm) or undefined when a native engine is passed */
+   liveDataDir?: string
++  /** an already-open live engine; takes precedence over `liveDataDir` when set */
+   liveEngine?: import('../db/engine.js').DbEngine
++  /** migrations applied to both the shadow and (as pending) the live db before diffing */
+   migrations: MigrationFile[]
++  /** ignored for diffing (seed is data, not schema); accepted so callers can pass one options bag */
+   seedSql?: string
++  /** schema to diff; defaults to 'public' */
+   schema?: string
+   /** factory for the shadow engine (native mode); omit for wasm/in-memory shadow */
+   makeShadowEngine?: () => Promise<import('../db/engine.js').DbEngine>
+ }
+ 
++/** Compute the DDL delta from the migrations-only shadow db to the current live schema. */
+ export async function computeDbDiff(opts: DbDiffOptions): Promise<string[]> {
+   const schema = opts.schema ?? 'public'
+ 
+@@ -50,10 +56,12 @@ export async function computeDbDiff(opts: DbDiffOptions): Promise<string[]> {
+   }
+ }
+ 
++/** Fresh throwaway data dir for a native-engine shadow database, under the OS temp dir. */
+ export function shadowNativeDataDir(): string {
+   return join(mkdtempSync(join(tmpdir(), 'tinbase-shadow-')), 'pg')
+ }
+ 
++/** Inputs for {@link pullSchema}: everything {@link DbDiffOptions} needs plus where/how to write the migration. */
+ export interface DbPullOptions extends DbDiffOptions {
+   /** directory to write the migration into (usually supabase/migrations); omit to skip writing */
+   migrationsDir?: string
+@@ -63,15 +71,19 @@ export interface DbPullOptions extends DbDiffOptions {
+   stamp?: string
+ }
+ 
++/** Outcome of a {@link pullSchema} run. */
+ export interface DbPullResult {
++  /** the diffed DDL statements; empty when live and migrations already match */
+   ddl: string[]
++  /** timestamp version recorded for the written migration, or null when nothing was written */
+   version: string | null
++  /** path of the written migration file, or null when `migrationsDir` was omitted or ddl was empty */
+   path: string | null
+ }
+ 
+ /**
+  * `tinbase db pull` core: like `db diff`, but writes the delta as a migration
+- * AND records it as already-applied on the live database — the schema is
++ * AND records it as already-applied on the live database - the schema is
+  * already there, so a subsequent `tinbase start` must not re-run it. This is
+  * how you bring an out-of-migration (or externally-created) schema under
+  * version control.
+diff --git a/src/node/fs-driver.ts b/src/node/fs-driver.ts
+index c941051..ef9fa36 100644
+--- a/src/node/fs-driver.ts
++++ b/src/node/fs-driver.ts
+@@ -1,11 +1,26 @@
++/**
++ * Filesystem-backed storage driver (Node only). Persists object bytes as files
++ * under a single root directory, with path-traversal protection on every key.
++ */
+ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+ import { dirname, join, normalize, sep } from 'node:path'
+ import type { StorageDriver } from '../types.js'
+ 
+-/** Node-only driver — object bytes live under a root directory. */
++/**
++ * Node-only {@link StorageDriver} that keeps object bytes as files under a
++ * single root directory. Keys map to relative paths beneath the root.
++ */
+ export class FsStorageDriver implements StorageDriver {
+   constructor(private root: string) {}
+ 
++  /**
++   * Resolve a storage key to an absolute path inside the root.
++   *
++   * SECURITY: rejects keys that escape the root (e.g. `../`); the normalized
++   * path must stay under `root` + separator or the key is refused.
++   *
++   * @throws if the key would resolve outside the root directory.
++   */
+   private resolve(key: string): string {
+     const path = normalize(join(this.root, key))
+     if (!path.startsWith(normalize(this.root) + sep)) {
+@@ -14,12 +29,14 @@ export class FsStorageDriver implements StorageDriver {
+     return path
+   }
+ 
++  /** Write object bytes, creating parent directories as needed. */
+   async put(key: string, data: Uint8Array): Promise<void> {
+     const path = this.resolve(key)
+     await mkdir(dirname(path), { recursive: true })
+     await writeFile(path, data)
+   }
+ 
++  /** Read object bytes, or null if the key does not exist. */
+   async get(key: string): Promise<Uint8Array | null> {
+     try {
+       return new Uint8Array(await readFile(this.resolve(key)))
+@@ -29,10 +46,12 @@ export class FsStorageDriver implements StorageDriver {
+     }
+   }
+ 
++  /** Delete an object; a missing key is not an error. */
+   async delete(key: string): Promise<void> {
+     await rm(this.resolve(key), { force: true })
+   }
+ 
++  /** Delete several objects in sequence. */
+   async deleteMany(keys: string[]): Promise<void> {
+     for (const k of keys) await this.delete(k)
+   }
+diff --git a/src/node/load-functions.ts b/src/node/load-functions.ts
+index 3439d12..d31b311 100644
+--- a/src/node/load-functions.ts
++++ b/src/node/load-functions.ts
+@@ -8,7 +8,7 @@ import { bundleFunction } from './bundle-function.js'
+ 
+ /**
+  * Load edge-function secrets from supabase/functions/.env (KEY=VALUE lines,
+- * `#` comments). These are exposed to functions via Deno.env and ctx.env —
++ * `#` comments). These are exposed to functions via Deno.env and ctx.env -
+  * the local equivalent of `supabase functions serve --env-file`.
+  */
+ export async function loadFunctionEnv(projectDir: string): Promise<Record<string, string>> {
+@@ -34,6 +34,14 @@ export async function loadFunctionEnv(projectDir: string): Promise<Record<string
+   return env
+ }
+ 
++/**
++ * Discover and load every edge function under supabase/functions/, keyed by
++ * directory name. Dirs starting with `_` or `.` are skipped (shared code).
++ * Each function is bundled with esbuild when available (falling back to a
++ * plain import), then its handler is taken from a default export or a
++ * captured `Deno.serve()` call. Load failures warn and skip rather than
++ * throwing, so one broken function can't block startup.
++ */
+ export async function loadFunctions(projectDir: string): Promise<Map<string, EdgeFunction>> {
+   const functions = new Map<string, EdgeFunction>()
+   const root = join(projectDir, 'supabase', 'functions')
+diff --git a/src/node/native/engine.ts b/src/node/native/engine.ts
+index e000ece..5c7015f 100644
+--- a/src/node/native/engine.ts
++++ b/src/node/native/engine.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Native embedded Postgres engine — PocketBase-class footprint with real
++ * Native embedded Postgres engine - PocketBase-class footprint with real
+  * Postgres semantics. Downloads platform binaries once (~12 MB from
+  * theseus-rs/postgresql-binaries), runs initdb with memory-lean settings,
+  * and manages the postgres child process. Trust auth over a private unix
+@@ -17,6 +17,7 @@ import { buildWireEngine } from './wire-engine.js'
+ 
+ const DEFAULT_PG_VERSION = '17.7.0'
+ 
++/** Options for {@link createNativeEngine}. */
+ export interface NativeEngineOptions {
+   /** Postgres data directory (created + initdb'd if missing). */
+   dataDir: string
+@@ -24,6 +25,7 @@ export interface NativeEngineOptions {
+   version?: string
+   /** Where downloaded binaries are cached. Default ~/.cache/tinbase */
+   cacheDir?: string
++  /** sink for progress lines (download, install); no-op when omitted */
+   log?: (msg: string) => void
+ }
+ 
+@@ -49,7 +51,7 @@ export async function ensurePostgres(version = DEFAULT_PG_VERSION, cacheDir?: st
+ 
+   // Concurrency-safe: multiple test workers / processes may call this at once on
+   // a cold cache. Each downloads + extracts to unique temp paths, then atomically
+-  // renames into place — so no worker ever sees a half-written tarball or a
++  // renames into place - so no worker ever sees a half-written tarball or a
+   // partially-extracted install dir.
+   const url = `https://github.com/theseus-rs/postgresql-binaries/releases/download/${version}/postgresql-${version}-${t}.tar.gz`
+   mkdirSync(root, { recursive: true })
+@@ -96,6 +98,11 @@ synchronous_commit = off
+ logging_collector = off
+ `
+ 
++/**
++ * Boot the embedded Postgres child (initdb on first run) and return a {@link DbEngine}
++ * backed by two wire connections: one for queries/transactions (serialized by a mutex),
++ * one dedicated to LISTEN/NOTIFY.
++ */
+ export async function createNativeEngine(opts: NativeEngineOptions): Promise<DbEngine> {
+   const installDir = await ensurePostgres(opts.version, opts.cacheDir, opts.log)
+   const bin = (name: string) => join(installDir, 'bin', name)
+@@ -118,7 +125,7 @@ export async function createNativeEngine(opts: NativeEngineOptions): Promise<DbE
+   // Remove it if the process it names is no longer alive.
+   removeStalePidFile(join(opts.dataDir, 'postmaster.pid'))
+ 
+-  // private socket dir — trust auth is safe because only this user can reach it.
++  // private socket dir - trust auth is safe because only this user can reach it.
+   // Keep the path short: macOS caps unix socket paths at ~104 chars.
+   const sockDir = mkdtempSync(join(tmpdir(), 'tb-'))
+   chmodSync(sockDir, 0o700)
+@@ -179,7 +186,7 @@ export async function createNativeEngine(opts: NativeEngineOptions): Promise<DbE
+ /**
+  * Postgres refuses to boot if a postmaster.pid names a live process. When the
+  * previous run crashed the pid is stale; postgres usually clears it, but if the
+- * data dir moved or the boot ID differs it may not — remove it when the named
++ * data dir moved or the boot ID differs it may not - remove it when the named
+  * pid is dead so a fresh start succeeds.
+  */
+ function removeStalePidFile(pidPath: string): void {
+@@ -192,12 +199,12 @@ function removeStalePidFile(pidPath: string): void {
+     }
+     try {
+       process.kill(pid, 0) // throws if the process does not exist
+-      // process is alive — leave the pid file; postgres will report the conflict
++      // process is alive - leave the pid file; postgres will report the conflict
+     } catch {
+       rmSync(pidPath, { force: true })
+     }
+   } catch {
+-    // unreadable pid file — let postgres decide
++    // unreadable pid file - let postgres decide
+   }
+ }
+ 
+diff --git a/src/node/native/wire.ts b/src/node/native/wire.ts
+index 3c8ce1b..71fa358 100644
+--- a/src/node/native/wire.ts
++++ b/src/node/native/wire.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Minimal Postgres wire-protocol (v3) client — enough for tinbase's needs:
++ * Minimal Postgres wire-protocol (v3) client - enough for tinbase's needs:
+  * trust (unix socket), cleartext/md5/SCRAM-SHA-256 auth (external TCP),
+  * simple + extended queries, typed decoding, LISTEN/NOTIFY. Pure Node, no deps.
+  */
+@@ -15,15 +15,23 @@ interface ConnectOpts {
+   password?: string
+ }
+ 
++/** Result of one wire query: returned rows plus, for writes, the affected row count. */
+ export interface WireResults<T = any> {
++  /** result rows, typed as `T` */
+   rows: T[]
++  /** rows touched by an INSERT/UPDATE/DELETE; undefined for plain SELECTs */
+   affectedRows?: number
+ }
+ 
++/** Error raised from a Postgres ErrorResponse, carrying its structured fields. */
+ export class PgWireError extends Error {
++  /** SQLSTATE code (ErrorResponse field 'C') */
+   code?: string
++  /** human-readable detail line (field 'D') */
+   detail?: string
++  /** suggested fix, if the server sent one (field 'H') */
+   hint?: string
++  /** severity level, e.g. ERROR / FATAL (field 'S') */
+   severity?: string
+   constructor(fields: Map<string, string>) {
+     super(fields.get('M') ?? 'postgres error')
+@@ -39,6 +47,7 @@ interface Column {
+   typeOid: number
+ }
+ 
++/** A single Postgres connection speaking the v3 wire protocol; one op at a time, queued. */
+ export class PgWireClient {
+   private socket!: Socket
+   private buffer = Buffer.alloc(0)
+@@ -51,8 +60,10 @@ export class PgWireClient {
+   } | null = null
+   private queue: Promise<unknown> = Promise.resolve()
+   private closed = false
++  /** invoked for each NOTIFY on a LISTENed channel; set by the caller before listening */
+   onNotification: ((channel: string, payload: string) => void) | null = null
+ 
++  /** Open a connection and complete the auth handshake before resolving. */
+   static async connect(opts: ConnectOpts) {
+     const client = new PgWireClient()
+     await client.open(opts)
+@@ -105,7 +116,7 @@ export class PgWireClient {
+             // Authentication request
+             const code = payload.readInt32BE(0)
+             if (code === 0) {
+-              // AuthenticationOk — proceed to ReadyForQuery
++              // AuthenticationOk - proceed to ReadyForQuery
+             } else if (code === 3) {
+               // cleartext password
+               if (!needPassword()) return
+@@ -175,7 +186,7 @@ export class PgWireClient {
+             resolve()
+             return
+           }
+-          // ParameterStatus (S), BackendKeyData (K), NoticeResponse (N) — ignore
++          // ParameterStatus (S), BackendKeyData (K), NoticeResponse (N) - ignore
+         }
+       }
+       this.socket.on('data', startupHandler)
+@@ -196,7 +207,7 @@ export class PgWireClient {
+     return op
+   }
+ 
+-  /** Simple query protocol — supports multiple statements. */
++  /** Simple query protocol - supports multiple statements. */
+   async exec(sql: string): Promise<WireResults[]> {
+     return this.run(() => this.socket.write(message(0x51, cstring(sql))))
+   }
+@@ -224,6 +235,7 @@ export class PgWireClient {
+     return (results[0] ?? { rows: [] }) as WireResults<T>
+   }
+ 
++  /** Send Terminate and end the socket; a no-op once already closed. */
+   close(): Promise<void> {
+     return new Promise((resolve) => {
+       if (this.closed) return resolve()
+@@ -288,7 +300,7 @@ export class PgWireClient {
+           break
+         }
+         case 0x43: {
+-          // CommandComplete — tag like "INSERT 0 5" / "UPDATE 3" / "SELECT 2"
++          // CommandComplete - tag like "INSERT 0 5" / "UPDATE 3" / "SELECT 2"
+           if (!p) break
+           const tag = payload.toString('utf8', 0, payload.length - 1)
+           const parts = tag.split(' ')
+@@ -302,7 +314,7 @@ export class PgWireClient {
+           break
+         }
+         case 0x45: {
+-          // ErrorResponse — final resolution happens at ReadyForQuery
++          // ErrorResponse - final resolution happens at ReadyForQuery
+           if (p) p.error = new PgWireError(parseErrorFields(payload))
+           break
+         }
+@@ -317,7 +329,7 @@ export class PgWireClient {
+           break
+         }
+         case 0x5a: {
+-          // ReadyForQuery — op finished
++          // ReadyForQuery - op finished
+           if (!p) break
+           this.pending = null
+           if (p.error) p.reject(p.error)
+@@ -329,7 +341,7 @@ export class PgWireClient {
+           break
+         }
+         // ParseComplete (1), BindComplete (2), NoData (n), EmptyQueryResponse (I),
+-        // NoticeResponse (N), ParameterStatus (S) — ignored
++        // NoticeResponse (N), ParameterStatus (S) - ignored
+       }
+     }
+   }
+diff --git a/src/node/project.ts b/src/node/project.ts
+index 46b224c..387025c 100644
+--- a/src/node/project.ts
++++ b/src/node/project.ts
+@@ -3,11 +3,19 @@ import { readdir, readFile } from 'node:fs/promises'
+ import { join } from 'node:path'
+ import type { MigrationFile } from '../types.js'
+ 
++/** Migrations and optional seed SQL discovered under a project's supabase/ dir. */
+ export interface SupabaseProject {
++  /** Migrations in filename order (timestamp-prefixed, so lexical == chronological). */
+   migrations: MigrationFile[]
++  /** Contents of supabase/seed.sql when present; absent if the file does not exist. */
+   seedSql?: string
+ }
+ 
++/**
++ * Read supabase/migrations/*.sql (sorted, timestamp-prefixed so lexical =
++ * chronological) and, if one exists, supabase/seed.sql. A missing migrations
++ * dir or seed file is not an error.
++ */
+ export async function loadSupabaseProject(projectDir: string): Promise<SupabaseProject> {
+   const migrationsDir = join(projectDir, 'supabase', 'migrations')
+   const migrations: MigrationFile[] = []
+@@ -16,7 +24,7 @@ export async function loadSupabaseProject(projectDir: string): Promise<SupabaseP
+   try {
+     entries = await readdir(migrationsDir)
+   } catch {
+-    // no migrations directory — that's fine
++    // no migrations directory - that's fine
+   }
+   for (const entry of entries.sort()) {
+     if (!entry.endsWith('.sql')) continue
+@@ -28,7 +36,7 @@ export async function loadSupabaseProject(projectDir: string): Promise<SupabaseP
+   try {
+     seedSql = await readFile(join(projectDir, 'supabase', 'seed.sql'), 'utf8')
+   } catch {
+-    // no seed file
++    // no seed file - that's fine
+   }
+ 
+   return { migrations, seedSql }
+diff --git a/src/node/server-shared.ts b/src/node/server-shared.ts
+index 0a483e2..c517e5d 100644
+--- a/src/node/server-shared.ts
++++ b/src/node/server-shared.ts
+@@ -1,7 +1,10 @@
++/** Backend shape shared by the node:http and Bun servers, keeping each decoupled from the full backend. */
+ import type { RealtimeEngine } from '../realtime/engine.js'
+ 
+-/** The slice of a backend that servers need — keeps bun/node servers decoupled. */
++/** The slice of a backend that servers need - keeps bun/node servers decoupled. */
+ export interface SupaliteBackendShape {
++  /** HTTP request handler; the server forwards every non-upgrade request here */
+   fetch: (req: Request) => Promise<Response>
++  /** realtime engine the server hands accepted websocket connections to */
+   realtime: RealtimeEngine
+ }
+diff --git a/src/node/server.ts b/src/node/server.ts
+index 2a0d855..9ddeb4c 100644
+--- a/src/node/server.ts
++++ b/src/node/server.ts
+@@ -26,18 +26,29 @@ export async function findAvailablePort(startPort: number, host = '127.0.0.1', m
+   return null
+ }
+ 
++/** Options for {@link serve}. */
+ export interface ServeOptions {
++  /** Port to bind. Defaults to 54321. */
+   port?: number
++  /** Host to bind. Defaults to 127.0.0.1 (loopback only). */
+   host?: string
+ }
+ 
++/** A bound HTTP server plus its resolved address and a graceful shutdown hook. */
+ export interface RunningServer {
+   server: Server
++  /** The actually-bound port (may differ from the requested one when 0 is passed). */
+   port: number
+   url: string
+   close: () => Promise<void>
+ }
+ 
++/**
++ * Bind an HTTP server that dispatches requests to `backend.fetch` and upgrades
++ * `/realtime/v1` WebSocket handshakes into realtime sessions.
++ *
++ * @throws if the port is already in use (EADDRINUSE) or binding otherwise fails.
++ */
+ export async function serve(backend: TinbaseBackend, opts: ServeOptions = {}): Promise<RunningServer> {
+   const host = opts.host ?? '127.0.0.1'
+ 
+diff --git a/src/node/ws.ts b/src/node/ws.ts
+index 176e98e..bdb7dd3 100644
+--- a/src/node/ws.ts
++++ b/src/node/ws.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Minimal RFC 6455 WebSocket server on top of node:http upgrade events —
++ * Minimal RFC 6455 WebSocket server on top of node:http upgrade events -
+  * enough for Phoenix-protocol JSON text frames, so no `ws` dependency.
+  */
+ import { createHash } from 'node:crypto'
+@@ -9,11 +9,23 @@ import type { RealtimeSocketLike } from '../realtime/engine.js'
+ 
+ const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+ 
++/** A live socket. Callbacks are assigned by the realtime session after accept. */
+ export interface WsConnection extends RealtimeSocketLike {
++  /** invoked per decoded inbound message frame; null until the session wires it up */
+   onMessage: ((data: string | Uint8Array) => void) | null
++  /** invoked once when the socket closes; null until the session wires it up */
+   onClose: (() => void) | null
+ }
+ 
++/**
++ * Complete the RFC 6455 handshake on an http upgrade and return a connection
++ * that decodes inbound frames and encodes outbound ones. Returns null (and
++ * writes a 400) if the request isn't a valid websocket upgrade.
++ *
++ * `head` is any bytes node already read past the upgrade request; they're
++ * prepended to the frame buffer so a client that pipelines its first frame
++ * isn't dropped.
++ */
+ export function acceptWebSocket(req: IncomingMessage, socket: Duplex, head: Buffer): WsConnection | null {
+   const key = req.headers['sec-websocket-key']
+   if (!key || (req.headers.upgrade ?? '').toLowerCase() !== 'websocket') {
+@@ -125,13 +137,24 @@ export function acceptWebSocket(req: IncomingMessage, socket: Duplex, head: Buff
+ }
+ 
+ interface Frame {
++  /** FIN bit: true when this frame completes a message (not a fragment continuation) */
+   fin: boolean
++  /** RFC 6455 opcode (0x0 continuation, 0x1 text, 0x2 binary, 0x8 close, 0x9 ping, 0xa pong) */
+   opcode: number
++  /** whether the payload is masked; every client-to-server frame must be */
+   masked: boolean
++  /** the (already unmasked) frame payload bytes */
+   payload: Buffer
++  /** total bytes this frame occupies in the buffer (header + payload) */
+   frameLength: number
+ }
+ 
++/**
++ * Decode one frame from the front of `buf`. Returns null when more bytes are
++ * needed (partial frame), else the frame with its `frameLength` so the caller
++ * can advance the buffer. Throws when the declared 64-bit payload length
++ * exceeds 64 MiB; unmasks payloads in place.
++ */
+ export function decodeFrame(buf: Buffer): Frame | null {
+   if (buf.length < 2) return null
+   const fin = (buf[0] & 0x80) !== 0
+diff --git a/src/realtime/engine.ts b/src/realtime/engine.ts
+index 51bd6fe..3a7d9bd 100644
+--- a/src/realtime/engine.ts
++++ b/src/realtime/engine.ts
+@@ -13,34 +13,55 @@ import { quoteIdent } from '../db/database.js'
+ import { verifyJwt } from '../jwt.js'
+ import type { RequestContext } from '../types.js'
+ 
++/** The minimal socket surface the engine needs; any transport can supply it. */
+ export interface RealtimeSocketLike {
++  /** send a text or binary frame to the client */
+   send(data: string | Uint8Array): void
++  /** close the connection with an optional WebSocket close code/reason */
+   close(code?: number, reason?: string): void
+ }
+ 
++/** A decoded Phoenix channel message (normalized from either serializer version). */
+ interface PhoenixMessage {
++  /** channel topic the message targets */
+   topic: string
++  /** Phoenix event name, e.g. phx_join, heartbeat, broadcast, presence */
+   event: string
++  /** event-specific payload object */
+   payload: Record<string, unknown>
++  /** client message ref, echoed on the phx_reply; null for server-initiated pushes */
+   ref: string | null
++  /** ref of the join that owns this message; present on the v2 array serializer */
+   join_ref?: string | null
+ }
+ 
+ interface PostgresBinding {
++  /** server-assigned id echoed to the client so it can route matching events */
+   id: number
++  /** change type to match: INSERT, UPDATE, DELETE, or `*` for all */
+   event: string
++  /** schema to watch */
+   schema: string
++  /** table to watch, or `*` for every table in the schema */
+   table: string
++  /** optional `col=op.value` row filter (see {@link matchFilter}) */
+   filter?: string
+ }
+ 
+ interface Channel {
++  /** Phoenix topic, e.g. `realtime:room-1` */
+   topic: string
++  /** the join message's ref, echoed back on replies for this channel */
+   joinRef: string | null
++  /** postgres_changes subscriptions requested on join */
+   bindings: PostgresBinding[]
++  /** echo broadcasts back to the sender (config.broadcast.self) */
+   broadcastSelf: boolean
++  /** ack a broadcast with a phx_reply (config.broadcast.ack) */
+   broadcastAck: boolean
++  /** presence identity key; defaults to a random uuid when the client sends none */
+   presenceKey: string
++  /** whether the client opted into presence tracking */
+   presenceEnabled: boolean
+   /** subscriber auth (from the join's access_token), used to filter by RLS */
+   ctx: RequestContext
+@@ -51,7 +72,9 @@ interface Channel {
+ }
+ 
+ interface Connection {
++  /** the underlying transport socket */
+   socket: RealtimeSocketLike
++  /** channels this connection has joined, keyed by topic */
+   channels: Map<string, Channel>
+   /** Phoenix serializer version: "1.0.0" = JSON objects, "2.0.0" = JSON arrays */
+   vsn: string
+@@ -59,6 +82,7 @@ interface Connection {
+ 
+ type PresenceMetas = { metas: Record<string, unknown>[] }
+ 
++/** Holds all live connections and fans database changes and broadcasts out to them. */
+ export class RealtimeEngine {
+   private connections = new Set<Connection>()
+   private bindingCounter = 1
+@@ -109,7 +133,7 @@ export class RealtimeEngine {
+           [subTopic]
+         )
+         const read = ((rd.rows[0]?.n ?? 0) as number) > 0
+-        // write: does an INSERT policy let them broadcast? (last query — a
++        // write: does an INSERT policy let them broadcast? (last query - a
+         // failure aborts the tx, which we roll back anyway)
+         let write = true
+         try {
+@@ -145,6 +169,7 @@ export class RealtimeEngine {
+     }
+   }
+ 
++  /** Wire up the CDC and database-broadcast listeners; idempotent once started. */
+   async start(): Promise<void> {
+     if (this.stopCdc) return
+     this.stopCdc = await this.db.onCdcEvent((e) => this.dispatchCdc(e))
+@@ -153,11 +178,12 @@ export class RealtimeEngine {
+       try {
+         this.dispatchDbBroadcast(JSON.parse(payload) as { topic: string; event: string; payload: unknown })
+       } catch {
+-        // malformed payload — drop
++        // malformed payload - drop
+       }
+     })
+   }
+ 
++  /** Detach listeners and close every open socket (server shutdown). */
+   stop(): void {
+     this.stopCdc?.()
+     this.stopCdc = null
+@@ -405,7 +431,7 @@ export class RealtimeEngine {
+     const ref = read(refLen)
+     const topic = read(topicLen)
+     const userEvent = read(eventLen)
+-    read(metaLen) // metadata — not relayed
++    read(metaLen) // metadata - not relayed
+     const payloadBytes = bytes.subarray(offset)
+ 
+     const payload: Record<string, unknown> = {
+@@ -517,12 +543,12 @@ export class RealtimeEngine {
+         type: c.udtName,
+       }))
+     } catch {
+-      // schema went away — still deliver the event without columns
++      // schema went away - still deliver the event without columns
+     }
+ 
+     // RLS: only deliver a change to a subscriber if their role/claims would let
+     // them see the row. INSERT/UPDATE are re-checked by primary key as that
+-    // subscriber; DELETE cannot be re-queried (the row is gone) — see note below.
++    // subscriber; DELETE cannot be re-queried (the row is gone) - see note below.
+     const rlsTables = await this.db.getRlsTables(event.schema).catch(() => new Set<string>())
+     const rlsEnabled = rlsTables.has(event.table)
+     const pk = rlsEnabled ? (await this.db.getSchemaInfo(event.schema)).tables.get(event.table)?.primaryKey ?? [] : []
+@@ -539,7 +565,7 @@ export class RealtimeEngine {
+         // A DELETE on an RLS table can't be re-checked per row (the row is
+         // gone), so we can't confirm this subscriber was allowed to see it.
+         // Non-service subscribers therefore get only the primary key of the
+-        // deleted row, never the full old_record — otherwise every other
++        // deleted row, never the full old_record - otherwise every other
+         // tenant's deleted-row contents would leak. (service_role/bypassrls and
+         // non-RLS tables still get the full old_record.)
+         const redactOld =
+diff --git a/src/rest/build.ts b/src/rest/build.ts
+index 9d4a4d3..c1938b8 100644
+--- a/src/rest/build.ts
++++ b/src/rest/build.ts
+@@ -18,21 +18,32 @@ import {
+   type SelectItem,
+ } from './parse.js'
+ 
++/** A resolved embed relationship between a base table and an embedded target. */
+ interface Relationship {
++  /** to-one (base holds the fk), to-many (target holds the fk), or m2m via a junction */
+   type: 'to-one' | 'to-many' | 'm2m'
++  /** the foreign key driving the join; for m2m this is the junction's fk to the base */
+   fk: ForeignKey
++  /** junction table and its two fks, present only for m2m relationships */
+   junction?: { table: string; fkToBase: ForeignKey; fkToTarget: ForeignKey }
++  /** name of the embedded target table */
+   targetTable: string
+ }
+ 
++/** A built SQL statement plus its bind params and an optional separate count query. */
+ export interface BuiltQuery {
++  /** SQL text with `$n` placeholders */
+   sql: string
++  /** positional bind values for the placeholders */
+   params: unknown[]
++  /** separate exact-count query, emitted only when the client asked for a count */
+   countSql?: string
+ }
+ 
++/** json_agg fallback for an empty result set: a literal empty JSON array. */
+ const AGG_EMPTY = `'[]'::json`
+ 
++/** Builds SQL for one PostgREST request against a single schema's introspection. */
+ export class QueryBuilder {
+   private aliasCounter = 0
+   private consumedPaths = new Set<string>([''])
+@@ -72,6 +83,7 @@ export class QueryBuilder {
+ 
+   // ── public entrypoints ────────────────────────────────────────────────
+ 
++  /** Build the SELECT (with embeds/filters/order/pagination), plus an optional count query. */
+   buildSelect(table: string, opts: { count?: boolean } = {}): BuiltQuery {
+     this.table(table)
+     const alias = 't0'
+@@ -137,6 +149,12 @@ export class QueryBuilder {
+     }
+   }
+ 
++  /**
++   * Build a multi-row INSERT, optionally with ON CONFLICT upsert semantics.
++   * @param opts.upsert merge-duplicates (do update) or ignore-duplicates (do nothing)
++   * @param opts.missingDefault emit `default` for absent columns instead of `null`
++   * @param opts.returning wrap in a CTE so select= can shape the returned rows
++   */
+   buildInsert(
+     table: string,
+     rows: Record<string, unknown>[],
+@@ -198,6 +216,7 @@ export class QueryBuilder {
+     return { sql: this.wrapMutation(insert, table), params }
+   }
+ 
++  /** Build an UPDATE scoped by the base filters; SET comes from the JSON body. */
+   buildUpdate(table: string, body: Record<string, unknown>, opts: { returning: boolean }): BuiltQuery {
+     const tinfo = this.table(table)
+     const keys = Object.keys(body)
+@@ -216,6 +235,7 @@ export class QueryBuilder {
+     return { sql: this.wrapMutation(update, table, true), params }
+   }
+ 
++  /** Build a DELETE scoped by the base filters. */
+   buildDelete(table: string, opts: { returning: boolean }): BuiltQuery {
+     this.table(table)
+     const alias = this.aliasMutations ? 't0' : ''
+@@ -438,6 +458,7 @@ export class QueryBuilder {
+     return conds.length > 0 ? ` where ${conds.join(' and ')}` : ''
+   }
+ 
++  /** Render one condition (leaf filter or and/or subtree) as a SQL boolean expression. */
+   renderCond(cond: Cond, alias: string): string {
+     if (cond.kind === 'logic') return this.renderLogic(cond, alias)
+     return renderFilter(cond, alias)
+@@ -452,6 +473,7 @@ export class QueryBuilder {
+     return node.negated ? `not ${joined}` : joined
+   }
+ 
++  /** Render the `order by` clause for the terms scoped to the given embed path (`[]` = base). */
+   renderOrder(path: string[], alias: string): string {
+     const pathKey = path.join('.')
+     const terms = this.q.order.filter((o) => o.path.join('.') === pathKey)
+@@ -465,6 +487,7 @@ export class QueryBuilder {
+     return ` order by ${parts.join(', ')}`
+   }
+ 
++  /** Render `limit`/`offset` for the given path key (`''` = base); empty when neither is set. */
+   renderLimitOffset(pathKey: string): string {
+     let s = ''
+     const limit = this.q.limits.get(pathKey)
+@@ -543,7 +566,12 @@ export class QueryBuilder {
+ 
+ // ── shared rendering helpers ────────────────────────────────────────────
+ 
+-/** "data->a->>b" → "data"->'a'->>'b' ; numeric keys become array indexes. */
++/**
++ * Render a (possibly JSON-arrowed) column reference: `data->a->>b` becomes
++ * `"data"->'a'->>'b'`; numeric keys become array indexes.
++ * SECURITY: the base column is quoted as an identifier and text keys are quoted
++ * as literals, so a hostile column/key name can't break out of the expression.
++ */
+ export function renderColumnExpr(alias: string, raw: string): string {
+   const tokens = raw.split(/(->>|->)/)
+   const base = unquote(tokens[0].trim())
+@@ -562,6 +590,12 @@ function defaultAliasFor(raw: string): string {
+   return unquote(tokens[tokens.length - 1].trim())
+ }
+ 
++/**
++ * Validate a `::type` cast against an identifier-plus-`[]` allowlist and return it.
++ * SECURITY: casts are interpolated raw into SQL, so this reject is the only guard
++ * against injection through the cast token.
++ * @throws ParseError when the cast is not a bare type name (optionally array).
++ */
+ function sanitizeCast(cast: string): string {
+   if (!/^[a-zA-Z_][a-zA-Z0-9_ ]*(\[\])?$/.test(cast)) throw new ParseError(`invalid cast: ${cast}`)
+   return cast
+@@ -574,6 +608,11 @@ function udtToCast(udt: string): string {
+   return `::${quoteIdent(base)}${arr ? '[]' : ''}`
+ }
+ 
++/**
++ * Serialize a JS array into a Postgres array literal (`{a,b,...}`), recursing
++ * for nested arrays. Elements are double-quoted with backslash/quote escaping so
++ * the literal survives being bound as a parameter and cast to the target type.
++ */
+ export function pgArrayLiteral(arr: unknown[]): string {
+   const items = arr.map((el): string => {
+     if (el === null || el === undefined) return 'NULL'
+diff --git a/src/rest/errors.ts b/src/rest/errors.ts
+index d525c29..e052f98 100644
+--- a/src/rest/errors.ts
++++ b/src/rest/errors.ts
+@@ -1,3 +1,8 @@
++/**
++ * Turns thrown errors into PostgREST-shaped JSON error responses
++ * ({ code, message, details, hint }) and maps Postgres SQLSTATEs to HTTP
++ * statuses the way PostgREST does.
++ */
+ import { ApiError } from '../types.js'
+ import { ParseError } from './parse.js'
+ 
+@@ -22,6 +27,7 @@ function statusForSqlState(code: string): number {
+   }
+ }
+ 
++/** Shape of a node-postgres / pg-mem error carrying a SQLSTATE. */
+ interface PgError {
+   code?: string
+   message: string
+@@ -29,6 +35,11 @@ interface PgError {
+   hint?: string
+ }
+ 
++/**
++ * Normalize any thrown value into a JSON Response: ApiError/ParseError keep
++ * their status; anything with a 5-char SQLSTATE is mapped via
++ * {@link statusForSqlState}; everything else becomes a 500.
++ */
+ export function errorToResponse(e: unknown): Response {
+   if (e instanceof ApiError) {
+     return jsonResponse(e.status, e.body)
+@@ -49,6 +60,7 @@ export function errorToResponse(e: unknown): Response {
+   return jsonResponse(500, { code: 'PGRST500', message, details: null, hint: null })
+ }
+ 
++/** JSON Response helper; status 204 sends no body. */
+ export function jsonResponse(
+   status: number,
+   body: unknown,
+diff --git a/src/rest/handler.ts b/src/rest/handler.ts
+index 3d40845..57d3536 100644
+--- a/src/rest/handler.ts
++++ b/src/rest/handler.ts
+@@ -1,16 +1,28 @@
++/**
++ * The Data API: a PostgREST-compatible REST layer over /rest/v1/*. Routes
++ * table CRUD and RPC calls, parses the query string, delegates SQL generation
++ * to {@link QueryBuilder}, and renders PostgREST-shaped responses (Content-Range
++ * counts, singular-object media type, Prefer handling).
++ */
+ import { quoteIdent, quoteLiteral, type Database, type FunctionInfo } from '../db/database.js'
+ import { ApiError, type RequestContext } from '../types.js'
+ import { QueryBuilder, pgArrayLiteral, renderColumnExpr } from './build.js'
+ import { errorToResponse, jsonResponse } from './errors.js'
+ import { ParseError, parseQuery, type ParsedQuery } from './parse.js'
+ 
++/** Parsed `Prefer` header directives that shape a request's behavior/response. */
+ interface Prefer {
++  /** `return=` - whether a mutation echoes the rows, nothing, or only headers */
+   return?: 'representation' | 'minimal' | 'headers-only'
++  /** `count=` - include a total row count (only `exact` is computed here) */
+   count?: 'exact' | 'planned' | 'estimated'
++  /** `resolution=` - upsert conflict behavior on insert */
+   resolution?: 'merge-duplicates' | 'ignore-duplicates'
++  /** `missing=` - treat columns absent from an insert body as their default or as null */
+   missing?: 'default' | 'null'
+ }
+ 
++/** Parse a comma-separated `Prefer` header; unknown tokens are ignored. */
+ function parsePrefer(header: string | null): Prefer {
+   const prefer: Prefer = {}
+   if (!header) return prefer
+@@ -24,6 +36,7 @@ function parsePrefer(header: string | null): Prefer {
+   return prefer
+ }
+ 
++/** Accept/Content-Type that requests (or returns) a single object instead of an array. */
+ const OBJECT_MEDIA = 'application/vnd.pgrst.object+json'
+ const CSV_MEDIA = 'text/csv'
+ const PLAN_MEDIA = 'application/vnd.pgrst.plan'
+@@ -64,9 +77,11 @@ function rowsToCsv(rows: unknown[]): string {
+   return lines.join('\n')
+ }
+ 
++/** Dispatches /rest/v1/* requests to table or RPC handling and builds responses. */
+ export class RestHandler {
+   constructor(private db: Database) {}
+ 
++  /** Entry point: resolve the profile schema, enforce schema exposure, route to table/rpc. */
+   async handle(req: Request, ctx: RequestContext, url: URL): Promise<Response> {
+     try {
+       const rest = url.pathname.replace(/^\/rest\/v1\/?/, '')
+@@ -78,6 +93,7 @@ export class RestHandler {
+           ? req.headers.get('accept-profile')
+           : req.headers.get('content-profile')) ?? 'public'
+ 
++
+       if (rest.startsWith('rpc/')) {
+         return await this.handleRpc(req, ctx, url, schema, decodeURIComponent(rest.slice(4)))
+       }
+@@ -345,6 +361,7 @@ export class RestHandler {
+     const call = renderCall(schema, fn, args)
+     const q = parseQuery(searchParams)
+ 
++
+     // void
+     if (fn.returnType === 'void' && !fn.returnsSet) {
+       await this.db.withContext(ctx, (query) => query(`select ${call}`, []))
+diff --git a/src/rest/parse.ts b/src/rest/parse.ts
+index 1cfb6ff..2dd7b41 100644
+--- a/src/rest/parse.ts
++++ b/src/rest/parse.ts
+@@ -4,6 +4,7 @@
+  * and/or logic trees, ordering, and pagination.
+  */
+ 
++/** A selected column, optionally aliased and/or cast. */
+ export interface SelectColumn {
+   kind: 'column'
+   /** raw column expression, may contain json arrows: data->>key */
+@@ -14,6 +15,7 @@ export interface SelectColumn {
+   aggregate?: 'avg' | 'count' | 'max' | 'min' | 'sum'
+ }
+ 
++/** An embedded related resource, e.g. `author(name)` or `...profile(bio)`. */
+ export interface SelectEmbed {
+   kind: 'embed'
+   /** relation (table) name or fk hint target */
+@@ -21,13 +23,17 @@ export interface SelectEmbed {
+   alias?: string
+   /** disambiguation hint: fk constraint name, column name, or junction table */
+   hint?: string
++  /** `!inner` - turn the embed into an inner join (filters out unmatched base rows) */
+   inner: boolean
+   children: SelectItem[]
++  /** `...rel` spread - merge the related row's columns into the parent instead of nesting */
+   spread: boolean
+ }
+ 
++/** One entry in a `select=` list: a plain column or an embedded resource. */
+ export type SelectItem = SelectColumn | SelectEmbed
+ 
++/** A single `column=op.value` filter, possibly scoped to an embed path. */
+ export interface FilterCond {
+   kind: 'filter'
+   /** embed path, [] = base table */
+@@ -40,6 +46,7 @@ export interface FilterCond {
+   ftsConfig?: string
+ }
+ 
++/** An `and(...)`/`or(...)` group of conditions, optionally negated with `not`. */
+ export interface LogicCond {
+   kind: 'logic'
+   path: string[]
+@@ -48,8 +55,10 @@ export interface LogicCond {
+   conditions: Cond[]
+ }
+ 
++/** A leaf filter or an and/or subtree. */
+ export type Cond = FilterCond | LogicCond
+ 
++/** One `order=` term. `nullsFirst` undefined = let Postgres pick the default. */
+ export interface OrderTerm {
+   path: string[]
+   column: string
+@@ -57,20 +66,30 @@ export interface OrderTerm {
+   nullsFirst?: boolean
+ }
+ 
++/** The fully parsed query string, consumed by the QueryBuilder. */
+ export interface ParsedQuery {
++  /** select tree; defaults to a single `*` column when no `select=` was given */
+   select: SelectItem[]
++  /** base and embed-scoped filters, plus and/or logic trees */
+   conditions: Cond[]
++  /** ordering terms, each tagged with the embed path it applies to */
+   order: OrderTerm[]
+-  limits: Map<string, number>   // key = path joined with '.', '' = base
++  /** per-path row limit; key = path joined with '.', '' = base */
++  limits: Map<string, number>
++  /** per-path row offset; same keying as `limits` */
+   offsets: Map<string, number>
++  /** `on_conflict=` target columns for upsert */
+   onConflict?: string[]
++  /** explicit insert column set from `columns=`; absent = infer from the body rows */
+   columns?: string[]
+ }
+ 
++/** Thrown on malformed query syntax; mapped to a 400 PGRST100 by the handler. */
+ export class ParseError extends Error {}
+ 
+ const RESERVED = new Set(['select', 'order', 'limit', 'offset', 'on_conflict', 'columns'])
+ 
++/** PostgREST filter operator → SQL operator/keyword. */
+ export const FILTER_OPS: Record<string, string> = {
+   eq: '=', neq: '<>', gt: '>', gte: '>=', lt: '<', lte: '<=',
+   like: 'like', ilike: 'ilike', match: '~', imatch: '~*',
+@@ -81,6 +100,7 @@ export const FILTER_OPS: Record<string, string> = {
+   isdistinct: 'is distinct from',
+ }
+ 
++/** Parse a full URLSearchParams into a {@link ParsedQuery}. Unknown reserved keys and `apikey` are skipped. */
+ export function parseQuery(searchParams: URLSearchParams): ParsedQuery {
+   const q: ParsedQuery = {
+     select: [{ kind: 'column', name: '*' }],
+@@ -235,6 +255,7 @@ export function splitTopLevel(str: string, delim: string): string[] {
+   return out
+ }
+ 
++/** Strip surrounding double quotes and unescape `\"`; passthrough when unquoted. */
+ export function unquote(s: string): string {
+   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+     return s.slice(1, -1).replaceAll('\\"', '"')
+@@ -243,7 +264,9 @@ export function unquote(s: string): string {
+ }
+ 
+ /**
+- * select=a,b:c,d::text,rel!hint!inner(x,nested(y)),...spread(a)
++ * Parse a `select=` list into select items (columns and embeds), splitting at
++ * top level so nested embeds and quoted names stay intact.
++ * Grammar example: `select=a,b:c,d::text,rel!hint!inner(x,nested(y)),...spread(a)`
+  */
+ export function parseSelect(value: string): SelectItem[] {
+   return splitTopLevel(value, ',').map((item) => parseSelectItem(item.trim()))
+diff --git a/src/retention/service.ts b/src/retention/service.ts
+index 6a8e344..9cf710b 100644
+--- a/src/retention/service.ts
++++ b/src/retention/service.ts
+@@ -9,6 +9,7 @@
+  */
+ import type { Database } from '../db/database.js'
+ 
++/** Retention windows for the background sweep; a window of 0 disables that sweep. */
+ export interface RetentionConfig {
+   /** How often to run a sweep (ms). Default 1 hour. */
+   intervalMs?: number
+@@ -20,6 +21,7 @@ export interface RetentionConfig {
+ 
+ const DAY_MS = 24 * 60 * 60 * 1000
+ 
++/** Periodically purges expired/stale auth rows so those tables can't grow unbounded. */
+ export class RetentionService {
+   private timer: ReturnType<typeof setInterval> | null = null
+   // Tracks the sweep currently in flight. The boot sweep and interval sweeps
+@@ -41,6 +43,7 @@ export class RetentionService {
+     this.refreshTokenDays = config.refreshTokenDays ?? 30
+   }
+ 
++  /** Sweep once at boot, then on the configured interval; no-op if already running. */
+   start(): void {
+     if (this.timer) return
+     // run once at boot, then on the interval (tracking the in-flight sweep)
+@@ -81,7 +84,7 @@ export class RetentionService {
+     try {
+       await this.db.query(sql, params)
+     } catch {
+-      // table may not exist on a subset engine (pg-mem) — skip
++      // table may not exist on a subset engine (pg-mem) - skip
+     }
+   }
+ }
+diff --git a/src/storage/driver.ts b/src/storage/driver.ts
+index 1da22f0..7c51386 100644
+--- a/src/storage/driver.ts
++++ b/src/storage/driver.ts
+@@ -1,6 +1,13 @@
++/**
++ * Storage backends for object bytes. The default is in-memory; persistent
++ * drivers (disk, S3) implement the same StorageDriver interface.
++ */
+ import type { StorageDriver } from '../types.js'
+ 
+-/** Default driver — keeps object bytes in memory (browser-safe). */
++/**
++ * Default driver - keeps object bytes in memory, keyed by "bucket/key".
++ * Browser-safe (no fs); bytes are lost on restart.
++ */
+ export class MemoryStorageDriver implements StorageDriver {
+   private files = new Map<string, Uint8Array>()
+ 
+diff --git a/src/storage/handler.ts b/src/storage/handler.ts
+index 44ffc8d..c2d2521 100644
+--- a/src/storage/handler.ts
++++ b/src/storage/handler.ts
+@@ -7,7 +7,9 @@ import type { Database } from '../db/database.js'
+ import { signJwt, verifyJwt } from '../jwt.js'
+ import type { RequestContext, StorageDriver } from '../types.js'
+ 
++/** Construction options for {@link StorageHandler}. */
+ export interface StorageConfig {
++  /** secret used to sign and verify signed download/upload URL tokens */
+   jwtSecret: string
+   log?: (message: string) => void
+ }
+@@ -76,6 +78,7 @@ interface TusUpload {
+ 
+ const TUS_VERSION = '1.0.0'
+ 
++/** Routes /storage/v1/* requests to bucket and object operations. */
+ export class StorageHandler {
+   private tusUploads = new Map<string, TusUpload>()
+   private warnedTransform = false
+@@ -86,6 +89,7 @@ export class StorageHandler {
+     private config: StorageConfig
+   ) {}
+ 
++  /** Entry point: match the path to a bucket/object endpoint and map thrown errors to storage-api responses. */
+   async handle(req: Request, ctx: RequestContext, url: URL): Promise<Response> {
+     const rest = url.pathname.replace(/^\/storage\/v1\/?/, '').replace(/\/+$/, '')
+     const method = req.method.toUpperCase()
+@@ -288,7 +292,7 @@ export class StorageHandler {
+ 
+     if (contentType.startsWith('multipart/form-data')) {
+       // storage-js wraps Blob/File bodies in FormData with an EMPTY field
+-      // name, which some runtimes' formData() drops — parse bytes ourselves.
++      // name, which some runtimes' formData() drops - parse bytes ourselves.
+       const boundary = contentType.match(/boundary="?([^";]+)"?/)?.[1]
+       if (!boundary) return storageError(400, 'invalid_request', 'multipart body without boundary')
+       const parts = parseMultipart(new Uint8Array(await req.arrayBuffer()), boundary)
+diff --git a/src/types.ts b/src/types.ts
+index 2bb95a8..a6d3664 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -1,11 +1,24 @@
++/**
++ * Public configuration and shared types for the tinbase package. {@link BackendConfig}
++ * is the primary input to {@link import('./index.js').createBackend}; the rest are
++ * the small structural types that config and handlers exchange.
++ */
+ import type { JwtClaims } from './jwt.js'
+ 
++/** A single SQL migration, in Supabase CLI form (one file under supabase/migrations). */
+ export interface MigrationFile {
+   /** e.g. "20240101120000_create_posts" (no extension) */
+   name: string
++  /** Raw SQL applied in one statement batch. */
+   sql: string
+ }
+ 
++/**
++ * Configuration for {@link import('./index.js').createBackend}. Every field is
++ * optional; an empty config boots an in-memory PGlite backend on the Supabase
++ * local-dev defaults. The CLI derives this object from supabase/config.toml plus
++ * the project's migrations/functions/seed.
++ */
+ export interface BackendConfig {
+   /**
+    * PGlite data directory. Node: a filesystem path. Browser: "idb://name" or
+@@ -17,6 +30,7 @@ export interface BackendConfig {
+    * "tinbase/node"). Default: PGlite on `dataDir`.
+    */
+   engine?: import('./db/engine.js').DbEngine
++
+   /**
+    * Connect to an external Postgres you already run, e.g.
+    * "postgres://user:pass@host:5432/db", instead of the embedded engine. Node
+@@ -70,9 +84,11 @@ export interface BackendConfig {
+   retention?: import('./retention/service.js').RetentionConfig
+ }
+ 
++/** A rendered outbound email (OTP code, magic link, recovery, etc.). */
+ export interface MailMessage {
+   to: string
+   subject: string
++  /** Plain-text body. Carries OTP codes / magic links, so it is not logged by default. */
+   text: string
+ }
+ 
+@@ -81,6 +97,12 @@ export interface Mailer {
+   send(msg: MailMessage): Promise<void>
+ }
+ 
++/**
++ * The public Supabase local-dev JWT secret. Used when no `jwtSecret` is set so
++ * default keys match a stock `supabase start`.
++ *
++ * SECURITY: forgeable by anyone (it is public). Don't use it in production.
++ */
+ export const DEFAULT_JWT_SECRET = 'super-secret-jwt-token-with-at-least-32-characters-long'
+ 
+ /** Per-request execution context derived from apikey/Authorization headers. */
+@@ -91,6 +113,7 @@ export interface RequestContext {
+   claims: JwtClaims | null
+ }
+ 
++/** Pluggable object-storage backend for bucket bytes (in-memory, fs, etc.). */
+ export interface StorageDriver {
+   put(key: string, data: Uint8Array): Promise<void>
+   get(key: string): Promise<Uint8Array | null>
+@@ -98,6 +121,7 @@ export interface StorageDriver {
+   deleteMany(keys: string[]): Promise<void>
+ }
+ 
++/** Error carrying an HTTP status + JSON body, thrown by handlers and rendered as-is to the client. */
+ export class ApiError extends Error {
+   constructor(
+     public status: number,
+diff --git a/src/webhooks/service.ts b/src/webhooks/service.ts
+index a7145e9..39aa630 100644
+--- a/src/webhooks/service.ts
++++ b/src/webhooks/service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Database webhooks — fire an HTTP request when rows change, the tinbase
++ * Database webhooks - fire an HTTP request when rows change, the tinbase
+  * equivalent of Supabase Database Webhooks (which use pg_net under the hood).
+  * Built on the existing CDC pipeline (triggers + pg_notify), so it needs no C
+  * extension and works on both engines. The POST body matches Supabase's
+@@ -7,9 +7,11 @@
+  */
+ import type { CdcEvent, Database } from '../db/database.js'
+ 
++/** A registered database webhook: which changes to watch and where to POST them. */
+ export interface WebhookConfig {
+   /** table to watch */
+   table: string
++  /** schema of the watched table; defaults to 'public' */
+   schema?: string
+   /** which events fire the hook; default all */
+   events?: ('INSERT' | 'UPDATE' | 'DELETE')[]
+@@ -23,14 +25,20 @@ export interface WebhookConfig {
+   timeoutMs?: number
+ }
+ 
++/** Result of one webhook delivery attempt, passed to the optional `onDelivery` callback. */
+ export interface WebhookDelivery {
+   webhook: WebhookConfig
++  /** the CDC event that triggered this delivery */
+   event: CdcEvent
++  /** HTTP response status; null when the request never got a reply (error/blocked) */
+   status: number | null
++  /** true when the response was 2xx */
+   ok: boolean
++  /** failure reason (network error, blocked SSRF target); undefined on success */
+   error?: string
+ }
+ 
++/** Watches the CDC stream and POSTs matching row changes to registered webhooks. */
+ export class WebhooksService {
+   private hooks: WebhookConfig[] = []
+   private stop: (() => void) | null = null
+@@ -42,6 +50,7 @@ export class WebhooksService {
+     private onDelivery?: (d: WebhookDelivery) => void
+   ) {}
+ 
++  /** All currently registered webhooks. */
+   list(): WebhookConfig[] {
+     return [...this.hooks]
+   }
+@@ -53,6 +62,7 @@ export class WebhooksService {
+     await this.ensureStarted()
+   }
+ 
++  /** Register an initial set of webhooks and start dispatching if any exist. */
+   async start(initial: WebhookConfig[] = []): Promise<void> {
+     for (const h of initial) {
+       this.hooks.push(h)
+@@ -67,6 +77,7 @@ export class WebhooksService {
+     this.stop = await this.db.onCdcEvent((e) => this.dispatch(e))
+   }
+ 
++  /** Unsubscribe from the CDC stream; registered hooks are retained. */
+   stopService(): void {
+     this.stop?.()
+     this.stop = null
+-- 
+2.55.0
+

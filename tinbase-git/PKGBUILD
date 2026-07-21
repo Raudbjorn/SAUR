@@ -1,0 +1,113 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+
+pkgname=tinbase-git
+pkgver=0.10.0.r14.g8005938
+pkgrel=1
+pkgdesc='Docker-free, Supabase-compatible local backend with embedded PostgreSQL'
+arch=('x86_64')
+url='https://github.com/tinbase/tinbase'
+license=('MIT')
+options=('!debug')
+depends=(
+  'brotli'
+  'e2fsprogs'
+  'glibc'
+  'icu'
+  'keyutils'
+  'krb5'
+  'libgcc'
+  'libstdc++'
+  'libxml2-legacy'
+  'lz4'
+  'nodejs>=22'
+  'openssl'
+  'xz'
+  'zlib'
+  'zstd'
+)
+makedepends=(
+  'git'
+  'npm'
+)
+provides=("tinbase=$pkgver")
+conflicts=('tinbase')
+_srcname='tinbase-src'
+_patch='0001-docs-audit-JSDoc-and-comments-across-src-for-consist.patch'
+source=(
+  "$_srcname::git+https://github.com/tinbase/tinbase.git"
+  "$_patch"
+)
+sha256sums=(
+  'SKIP'
+  '36818408267765366280c6a7e8338e32934f6fc877a613c8e7677c2f61121406'
+)
+
+pkgver() {
+  cd "$_srcname"
+
+  git describe --long --tags --abbrev=7 \
+    | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "$_srcname"
+
+  if git apply --reverse --check "$srcdir/$_patch" 2>/dev/null; then
+    printf '%s\n' 'documentation patch already applied upstream'
+  else
+    git apply "$srcdir/$_patch"
+  fi
+
+  export npm_config_cache="$srcdir/npm-cache"
+  npm ci
+  npm --prefix admin-ui ci
+}
+
+build() {
+  cd "$_srcname"
+
+  export npm_config_cache="$srcdir/npm-cache"
+  npm run build
+}
+
+check() {
+  cd "$_srcname"
+
+  export npm_config_cache="$srcdir/npm-cache"
+  npm test -- --hookTimeout 30000 --testTimeout 30000 --exclude test/database-url.test.ts --exclude test/cli-db-reset.test.ts
+}
+
+package() {
+  cd "$_srcname"
+
+  export npm_config_cache="$srcdir/npm-cache"
+
+  local _dest="$pkgdir/usr/lib/node_modules/tinbase"
+  local _esbuild="$_dest/node_modules/esbuild/bin/esbuild"
+  install -d "$_dest" "$pkgdir/usr/bin"
+  cp -a dist node_modules "$_dest/"
+  install -Dm644 package.json "$_dest/package.json"
+  install -Dm644 package-lock.json "$_dest/package-lock.json"
+  npm --prefix "$_dest" prune --omit=dev --ignore-scripts --offline
+  rm "$_dest/package-lock.json"
+  rm "$_esbuild"
+  ln -s ../../@esbuild/linux-x64/bin/esbuild "$_esbuild"
+  # railroad-diagrams ships an unused Python port alongside its JavaScript entrypoint.
+  rm "$_dest/node_modules/railroad-diagrams/railroad_diagrams.py"
+
+  local _entries _scope
+  shopt -s dotglob nullglob
+  for _scope in "$_dest/node_modules"/@*; do
+    _entries=("$_scope"/*)
+    ((${#_entries[@]} == 0)) && rmdir "$_scope"
+  done
+  shopt -u dotglob nullglob
+  install -Dm644 README.md "$_dest/README.md"
+  install -Dm644 LICENSE "$_dest/LICENSE"
+  install -Dm644 assets/logo.svg "$_dest/assets/logo.svg"
+  chmod 755 "$_dest/dist/cli.js"
+  ln -s ../lib/node_modules/tinbase/dist/cli.js "$pkgdir/usr/bin/tinbase"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 CHANGELOG.md "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
+}
