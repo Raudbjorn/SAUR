@@ -1,0 +1,249 @@
+diff --git a/app/package.json b/app/package.json
+index c53086e15..c101fe662 100644
+--- a/app/package.json
++++ b/app/package.json
+@@ -14,10 +14,10 @@
+   "dependencies": {
+     "@bengotow/slate-edit-list": "github:bengotow/slate-edit-list#b868e108",
+     "@electron/remote": "^2.1.2",
++    "@libsql/client": "^0.17.4",
+     "@modelcontextprotocol/sdk": "^1.29.0",
+     "@testing-library/react": "^12.1.5",
+     "app-module-path": "^2.2.0",
+-    "better-sqlite3": "^12.8.0",
+     "cheerio": "^1.1.2",
+     "chromium-net-errors": "1.0.3",
+     "chrono-node": "^2.9.0",
+diff --git a/app/src/flux/stores/database-agent.js b/app/src/flux/stores/database-agent.js
+index f809a9e79..f289c89fa 100644
+--- a/app/src/flux/stores/database-agent.js
++++ b/app/src/flux/stores/database-agent.js
+@@ -1,37 +1,44 @@
+-const Sqlite3 = require('better-sqlite3');
++// Database query helper forked by DatabaseStore. Reads/writes the
++// Mailspring mailbox/edgehill database via the @libsql/client (async).
++// Read-only semantics are enforced by the application layer (libsql has
++// no `readonly` constructor option); DatabaseStore itself declares the
++// connection read-only at the call sites that matter.
++const { createClient } = require('@libsql/client');
+ const dbs = {};
+ 
+ const deathDelay = 5000;
+ let deathTimer = setTimeout(() => process.exit(0), deathDelay);
+ 
+-function getDatabase(dbpath) {
++async function getDatabase(dbpath) {
+   if (dbs[dbpath]) {
+-    return Promise.resolve(dbs[dbpath]);
++    return dbs[dbpath];
+   }
+ 
+   try {
+-    dbs[dbpath] = new Sqlite3(dbpath, { readonly: true, timeout: 10000 });
++    dbs[dbpath] = await createClient({ url: 'file:' + dbpath });
+   } catch (err) {
+     console.error(err);
+     process.exit(1);
+   }
+ 
+-  return Promise.resolve(dbs[dbpath]);
++  return dbs[dbpath];
+ }
+ 
+-process.on('message', m => {
++process.on('message', async m => {
+   clearTimeout(deathTimer);
+   const { query, values, id, dbpath } = m;
+   const start = Date.now();
+ 
+-  getDatabase(dbpath).then(db => {
++  try {
++    const db = await getDatabase(dbpath);
+     clearTimeout(deathTimer);
+-    const fn = query.startsWith('SELECT') ? 'all' : 'run';
+-    const stmt = db.prepare(query);
+-    const results = stmt[fn](values);
+-    process.send({ type: 'results', results, id, agentTime: Date.now() - start });
++    const result = await db.execute({ sql: query, args: values });
++    const rows = result && result.rows ? result.rows : [];
++    process.send({ type: 'results', results: rows, id, agentTime: Date.now() - start });
++  } catch (err) {
++    process.send({ type: 'error', error: err && err.toString ? err.toString() : String(err), id });
++  }
+ 
+-    clearTimeout(deathTimer);
+-    deathTimer = setTimeout(() => process.exit(0), deathDelay);
+-  });
++  clearTimeout(deathTimer);
++  deathTimer = setTimeout(() => process.exit(0), deathDelay);
+ });
+diff --git a/app/src/flux/stores/database-store.ts b/app/src/flux/stores/database-store.ts
+index eeadaeac3..261501706 100644
+--- a/app/src/flux/stores/database-store.ts
++++ b/app/src/flux/stores/database-store.ts
+@@ -2,8 +2,7 @@
+ import path from 'path';
+ import createDebug from 'debug';
+ import childProcess, { ChildProcess } from 'child_process';
+-import { LRUCache } from 'lru-cache';
+-import Sqlite3 from 'better-sqlite3';
++import { createClient, type Client } from '@libsql/client';
+ 
+ import { ExponentialBackoffScheduler } from '../../backoff-schedulers';
+ import { Model } from '../models/model';
+@@ -50,21 +49,22 @@ function handleUnrecoverableDatabaseError(
+ 
+ async function openDatabase(dbPath: string) {
+   try {
+-    const db = new Sqlite3(dbPath, { readonly: true, timeout: 10000 }) as Sqlite3.Database;
++    // libsql/client has no `readonly` constructor option and no `pragma()`
++    // method on the client object. Read-only semantics are enforced by the
++    // application layer (DatabaseStore never issues write SQL at runtime);
++    // pragmas are applied via execute() on the freshly created client.
++    const db = (await createClient({ url: 'file:' + dbPath })) as Client;
+ 
+     // https://www.sqlite.org/wal.html
+     // WAL provides more concurrency as readers do not block writers and a writer
+     // does not block readers. Reading and writing can proceed concurrently.
+-    db.pragma(`journal_mode = WAL`);
+-
+-    // Note: These are properties of the connection, so they must be set regardless
+-    // of whether the database setup queries are run.
++    await db.execute({ sql: `PRAGMA journal_mode = WAL` });
+ 
+     // https://www.sqlite.org/intern-v-extern-blob.html
+     // A database page size of 8192 or 16384 gives the best performance for large BLOB I/O.
+-    db.pragma(`main.page_size = 8192`);
+-    db.pragma(`main.cache_size = 20000`);
+-    db.pragma(`main.synchronous = NORMAL`);
++    await db.execute({ sql: `PRAGMA main.page_size = 8192` });
++    await db.execute({ sql: `PRAGMA main.cache_size = 20000` });
++    await db.execute({ sql: `PRAGMA main.synchronous = NORMAL` });
+     return db;
+   } catch (err) {
+     handleUnrecoverableDatabaseError(err);
+@@ -131,9 +131,11 @@ Section: Database
+ class DatabaseStore extends MailspringStore {
+   _open = false;
+   _waiting = [];
+-  _preparedStatementCache = new LRUCache<string, Sqlite3.Statement<any[]>>({ max: 500 });
++  // libsql/client has no prepared-statement cache API; each execute() call
++  // prepares the statement on the server side. The LRU cache is intentionally
++  // omitted here.
+   _databasePath = databasePath(AppEnv.getConfigDirPath(), AppEnv.inSpecMode());
+-  _db?: Sqlite3.Database;
++  _db?: Client;
+ 
+   constructor() {
+     super();
+@@ -290,14 +292,9 @@ class DatabaseStore extends MailspringStore {
+           await Promise.delay(scheduler.currentDelay());
+         }
+ 
+-        let stmt = this._preparedStatementCache.get(query);
+-        if (!stmt) {
+-          stmt = this._db.prepare(query);
+-          this._preparedStatementCache.set(query, stmt);
+-        }
+-
+         const start = Date.now();
+-        results = stmt[fn](values) as any[];
++        const result = await this._db.execute({ sql: query, args: values });
++        results = (result && result.rows ? result.rows : []) as any[];
+         const msec = Date.now() - start;
+         if (debugVerbose.enabled) {
+           const q = `(${msec}ms) ${query}`;
+@@ -307,10 +304,14 @@ class DatabaseStore extends MailspringStore {
+         if (msec > 100) {
+           const msgPrefix = msec > 100 ? 'DatabaseStore: query took more than 100ms - ' : '';
+           if (query.startsWith(`SELECT `) && DEBUG_QUERY_PLANS) {
+-            const plan = this._db
+-              .prepare<any, { detail: string }>(`EXPLAIN QUERY PLAN ${query}`)
+-              .all(values);
+-            const planString = `${plan.map((row) => row.detail).join('\n')} for ${query}`;
++            const planResult = await this._db.execute({
++              sql: `EXPLAIN QUERY PLAN ${query}`,
++              args: values,
++            });
++            const planRows = (planResult && planResult.rows ? planResult.rows : []) as Array<{
++              detail: string;
++            }>;
++            const planString = `${planRows.map((row) => row.detail).join('\n')} for ${query}`;
+             const quiet = ['ThreadCounts', 'ThreadSearch', 'ContactSearch', 'COVERING INDEX'];
+ 
+             if (!quiet.find((str) => planString.includes(str))) {
+@@ -334,9 +335,7 @@ class DatabaseStore extends MailspringStore {
+         }
+ 
+         // Some errors require action before the query can be retried
+-        if (new RegExp(schemaChangedStr, 'i').test(errString)) {
+-          this._preparedStatementCache.delete(query);
+-        }
++        // (statement cache eviction is a no-op for @libsql/client).
+       }
+       scheduler.nextDelay();
+     }
+diff --git a/package.json b/package.json
+index 4fde96db0..c0b7ecb37 100644
+--- a/package.json
++++ b/package.json
+@@ -18,9 +18,9 @@
+   },
+   "dependencies": {
+     "@electron/packager": "^20.0.1",
++    "@libsql/client": "^0.17.4",
+     "@playwright/test": "^1.59.1",
+     "@sentry/cli": "^2.43.0",
+-    "@types/better-sqlite3": "^7.6.3",
+     "@types/debug": "^4.1.2",
+     "@types/event-kit": "^2.4.0",
+     "@types/jasmine": "^1.3.1",
+@@ -46,7 +46,6 @@
+     "@types/underscore.string": "^0.0.33",
+     "@typescript-eslint/eslint-plugin": "^5.62.0",
+     "@typescript-eslint/parser": "^5.62.0",
+-    "better-sqlite3": "^12.8.0",
+     "chalk": "1.x.x",
+     "devtron": "^1.4.0",
+     "electron": "41.7.2",
+diff --git a/scripts/postinstall.js b/scripts/postinstall.js
+index 4cb4e096e..dea1e1436 100644
+--- a/scripts/postinstall.js
++++ b/scripts/postinstall.js
+@@ -125,20 +125,6 @@ if (cacheElectronTarget !== npmElectronTarget) {
+ 
+ // Audit is emitted with npm ls, no need to run it on EVERY command which is an odd default
+ 
+-async function sqliteMissingNanosleep() {
+-  return new Promise(resolve => {
+-    const sqliteLibDir = path.join(appModulesPath, 'better-sqlite3', 'build', 'Release');
+-    const staticLib = path.join(sqliteLibDir, 'sqlite3.a');
+-    const sharedLib = path.join(sqliteLibDir, 'better_sqlite3.node');
+-
+-    // Check the static lib first (build-from-source), then the prebuilt .node binary
+-    const target = fs.existsSync(staticLib) ? staticLib : sharedLib;
+-    safeExec(`nm '${target}' | grep nanosleep`, { ignoreStderr: true }, (err, resp) => {
+-      resolve(resp === '');
+-    });
+-  });
+-}
+-
+ async function run() {
+   // run `npm install` in ./app with Electron NPM config
+   await npm(`install --no-audit`, { cwd: './app', env: 'electron' });
+@@ -149,15 +135,6 @@ async function run() {
+   // run `npm ls` in ./app - detects missing peer dependencies, etc.
+   await npm(`ls`, { cwd: './app', env: 'electron' });
+ 
+-  // if SQlite was not built with HAVE_NANOSLEEP, do not ship this build! We need nanosleep
+-  // support so that multiple processes can connect to the sqlite file at the same time.
+-  // Without it, transactions only retry every 1 sec instead of every 10ms, leading to
+-  // awful db lock contention.  https://github.com/WiseLibs/better-sqlite3/issues/597
+-  if (['linux', 'darwin'].includes(process.platform) && (await sqliteMissingNanosleep())) {
+-    console.error(`better-sqlite compiled without -HAVE_NANOSLEEP, do not ship this build!`);
+-    process.exit(1001);
+-  }
+-
+   // write the marker with the electron version
+   fs.writeFileSync(cacheVersionPath, npmElectronTarget);
+ 

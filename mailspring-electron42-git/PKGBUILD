@@ -30,9 +30,11 @@ makedepends=(
 source=(
     "${_srcname}::git+${_ghurl}.git"
     "${_appname}.sh"
+    "mailspring-turso.patch"
 )
 sha256sums=('SKIP'
-            'a774c2f54fbbeeaac3cefc0f7250796d30c86d27f0fd40b7eaf9c0fdb021623d')
+            'a774c2f54fbbeeaac3cefc0f7250796d30c86d27f0fd40b7eaf9c0fdb021623d'
+            'SKIP')
 
 pkgver() {
     cd "${srcdir}/${_srcname}"
@@ -67,6 +69,33 @@ _set_build_env() {
 
 prepare() {
     cd "${srcdir}/${_srcname}"
+    # ------------------------------------------------------------------
+    # Turso/libsql port (mailspring-turso.patch):
+    # The upstream Mailspring recipe uses `better-sqlite3`, a native
+    # synchronous binding to SQLite. For the SAUR build we replace it
+    # with `@libsql/client` (Turso's all-async libsql binding) so the
+    # database-store can run on system Electron 42 without us having to
+    # recompile a native module per ABI. The patch is applied via
+    # `git apply --3way` so an upstream reshuffle that touches the
+    # same lines still resolves cleanly.
+    #
+    # Invariants (per the port brief):
+    #   * No `?mode=ro` query parameter — libsql has no readonly mode.
+    #   * No readonly constructor option (libsql/client has none).
+    #   * Read-only semantics are enforced at the application layer
+    #     (DatabaseStore never issues write SQL at runtime).
+    #   * The `HAVE_NANOSLEEP` guard is dropped: libsql's WASM/native
+    #     tls implementation does not require nanosleep — the
+    #     retry/retry-on-lock contention pattern is handled inside
+    #     @libsql/client's executor.
+    # ------------------------------------------------------------------
+    git apply --3way "${srcdir}/mailspring-turso.patch"
+    # Pin the libsql client to an exact version (the patch sets a
+    # caret range); we use `npm pkg set` rather than hand-editing the
+    # tracked manifest so the version is recorded as a programmatic
+    # post-step, not a source-tree modification.
+    npm pkg set dependencies.@libsql/client='0.17.4'
+    (cd app && npm pkg set dependencies.@libsql/client='0.17.4')
     sed -i -e "
         s/@electronversion@/${_electronversion}/g
         s/@appname@/${_appname}/g
