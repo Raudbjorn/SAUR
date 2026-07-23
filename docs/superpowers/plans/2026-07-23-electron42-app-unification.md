@@ -441,7 +441,7 @@ namcap "$mailspring_pkg"
 bsdtar -tf "$mailspring_pkg" | sort
 ```
 
-Expected: build succeeds using Electron 42 and the archive contains `usr/bin/mailspring`, `usr/lib/mailspring/app.asar`, `better_sqlite3.node`, the desktop file, metainfo, and all six icon sizes.
+Expected: build succeeds using Electron 42 and the archive contains `usr/bin/mailspring`, `usr/lib/mailspring/app.asar`, `usr/lib/mailspring/app.asar.unpacked/node_modules/@libsql/linux-x64-gnu/index.node`, the desktop file, metainfo, and all six icon sizes.
 
 - [ ] **Step 12: Commit the Mailspring package**
 
@@ -739,11 +739,11 @@ First verify the installed Electron ABI and native modules:
 ELECTRON_RUN_AS_NODE=1 /usr/lib/electron42/electron \
   -p 'JSON.stringify({electron:process.versions.electron,node:process.versions.node,modules:process.versions.modules,napi:process.versions.napi})'
 bitwarden_node=/usr/lib/bitwarden/app.asar.unpacked/node_modules/@bitwarden/desktop-napi/desktop_napi.node
-mailspring_node=/usr/lib/mailspring/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+mailspring_node=/usr/lib/mailspring/app.asar.unpacked/node_modules/@libsql/linux-x64-gnu/index.node
 ELECTRON_RUN_AS_NODE=1 /usr/lib/electron42/electron \
   -e "require(${bitwarden_node@Q}); console.log('bitwarden desktop_napi loaded')"
 ELECTRON_RUN_AS_NODE=1 /usr/lib/electron42/electron \
-  -e "require(${mailspring_node@Q}); console.log('mailspring better-sqlite3 loaded')"
+  -e "require(${mailspring_node@Q}); console.log('mailspring @libsql/linux-x64-gnu loaded')"
 ```
 
 Expected: Electron reports module ABI 146, both modules print their loaded messages, and neither command reports `ERR_DLOPEN_FAILED`.

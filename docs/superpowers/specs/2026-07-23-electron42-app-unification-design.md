@@ -16,7 +16,7 @@ The resulting packages remain independently maintainable in SAUR and preserve th
 - `mailspring-git` 1.21.1 depends on the `electron41` provider supplied by `electron41-bin` and launches `/usr/lib/mailspring/app.asar` through `electron41`.
 - Cached Electron 42.7.1 uses Node 24.18.0, N-API 10, and `NODE_MODULE_VERSION` 146.
 - Electron 39 uses `NODE_MODULE_VERSION` 140. Bitwarden's Rust `desktop_napi.node` loads successfully under Electron 42 because it uses the stable N-API boundary.
-- Electron 41 uses `NODE_MODULE_VERSION` 145. Mailspring's installed `better_sqlite3.node` fails under Electron 42 with `ERR_DLOPEN_FAILED` because Electron 42 requires module version 146. Mailspring must therefore be rebuilt; changing only its launcher or dependency metadata is invalid.
+- Electron 41 uses `NODE_MODULE_VERSION` 145. Mailspring's installed `better_sqlite3.node` fails under Electron 42 with `ERR_DLOPEN_FAILED` because Electron 42 requires module version 146. The custom package therefore ports Mailspring from `better-sqlite3` to `@libsql/client` (Turso's libsql binding, which ships NAPI-stable prebuilds and works under Electron 42.7.1 without a per-ABI native rebuild).
 - The current Mailspring AUR recipe tracks upstream 1.23.x and builds against Electron 41. The custom recipe will update the installed 1.21.1 package to the current upstream revision while changing the Electron target to 42.
 - Electron 42 and `openai-codex-desktop` were removed in a package transaction on 2026-07-23 at 11:51 UTC. Electron 42 must be reinstalled as part of the transition.
 
@@ -98,7 +98,7 @@ For each recipe:
 Native-module verification is mandatory:
 
 - load Bitwarden's packaged `desktop_napi.node` with Electron 42 in Node mode;
-- load Mailspring's packaged `better_sqlite3.node` with Electron 42 in Node mode;
+- load Mailspring's packaged `@libsql/linux-x64-gnu/index.node` with Electron 42 in Node mode;
 - require successful exit and reject any `NODE_MODULE_VERSION`, `ERR_DLOPEN_FAILED`, missing-symbol, or missing-library error.
 
 ## Installation transition
