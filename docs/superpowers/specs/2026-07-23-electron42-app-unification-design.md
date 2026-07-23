@@ -53,6 +53,7 @@ The package will:
 - rebuild `better-sqlite3` and all other native modules for Electron ABI 146;
 - read `electron42-flags.conf` instead of `electron41-flags.conf` in the launcher.
 - remove the upstream recipe's `curl -s ipinfo.io/country` geolocation branch and select the standard npm/Electron registries deterministically, so clean builds have no undeclared or unbounded location probe.
+- fix the upstream icon loop to iterate over `_icon_sizes`, then verify that the package archive contains 16, 32, 64, 128, 256, and 512 pixel application icons.
 
 The recipe must not copy the currently installed Electron-41 native objects into the new package.
 
