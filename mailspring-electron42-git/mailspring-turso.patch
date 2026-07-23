@@ -15,10 +15,10 @@ index c53086e..2d9e346 100644
      "chromium-net-errors": "1.0.3",
      "chrono-node": "^2.9.0",
 diff --git a/app/src/flux/stores/database-agent.js b/app/src/flux/stores/database-agent.js
-index f809a9e..9cf59b2 100644
+index f809a9e..2339137 100644
 --- a/app/src/flux/stores/database-agent.js
 +++ b/app/src/flux/stores/database-agent.js
-@@ -1,37 +1,112 @@
+@@ -1,37 +1,137 @@
 -const Sqlite3 = require('better-sqlite3');
 +// Database query helper forked by DatabaseStore. The host DatabaseStore
 +// only ever issues read-class statements through this channel. We enforce
@@ -73,25 +73,41 @@ index f809a9e..9cf59b2 100644
 +  }
 +}
 +
++class DbMissingFileError extends Error {
++  constructor(dbpath) {
++    super(`Database agent: refusing to open missing file: ${dbpath}`);
++    this.code = 'DB_MISSING_FILE';
++  }
++}
++
 +async function getDatabase(dbpath) {
    if (dbs[dbpath]) {
 -    return Promise.resolve(dbs[dbpath]);
 +    return dbs[dbpath];
 +  }
 +
-+  let client;
++  // better-sqlite3 opened in {readonly: true} mode refused a missing
++  // file (it required the caller to bootstrap the schema first).
++  // libsql's createClient silently creates an empty database, which
++  // would let the host DatabaseStore proceed into "no such table"
++  // errors instead of triggering handleUnrecoverableDatabaseError.
++  // Preserve better-sqlite3's behavior: fail closed when the path
++  // is not an existing regular file.
++  const { statSync } = require('node:fs');
++  let stat;
 +  try {
-+    client = await createClient({ url: 'file:' + dbpath, timeout: 10000 });
++    stat = statSync(dbpath);
 +  } catch (err) {
-+    throw new DbOpenError(err);
++    throw new DbMissingFileError(dbpath);
++  }
++  if (!stat.isFile()) {
++    throw new DbMissingFileError(dbpath);
    }
  
-+  // PRAGMA query_only=ON makes SQLite reject every statement that would
-+  // write to the database. The flag is a property of the connection, so
-+  // it persists for the lifetime of this client.
++  let client;
    try {
 -    dbs[dbpath] = new Sqlite3(dbpath, { readonly: true, timeout: 10000 });
-+    await client.execute({ sql: 'PRAGMA query_only = ON' });
++    client = await createClient({ url: 'file:' + dbpath, timeout: 10000 });
    } catch (err) {
 -    console.error(err);
 -    process.exit(1);
@@ -99,6 +115,15 @@ index f809a9e..9cf59b2 100644
    }
  
 -  return Promise.resolve(dbs[dbpath]);
++  // PRAGMA query_only=ON makes SQLite reject every statement that would
++  // write to the database. The flag is a property of the connection, so
++  // it persists for the lifetime of this client.
++  try {
++    await client.execute({ sql: 'PRAGMA query_only = ON' });
++  } catch (err) {
++    throw new DbOpenError(err);
++  }
++
 +  dbs[dbpath] = client;
 +  return client;
  }
@@ -154,7 +179,7 @@ index f809a9e..9cf59b2 100644
 +  }
  });
 diff --git a/app/src/flux/stores/database-store.ts b/app/src/flux/stores/database-store.ts
-index eeadaea..184af93 100644
+index eeadaea..b492460 100644
 --- a/app/src/flux/stores/database-store.ts
 +++ b/app/src/flux/stores/database-store.ts
 @@ -2,8 +2,7 @@
@@ -167,9 +192,17 @@ index eeadaea..184af93 100644
  
  import { ExponentialBackoffScheduler } from '../../backoff-schedulers';
  import { Model } from '../models/model';
-@@ -50,21 +49,21 @@ function handleUnrecoverableDatabaseError(
+@@ -49,22 +48,40 @@ function handleUnrecoverableDatabaseError(
+ }
  
  async function openDatabase(dbPath: string) {
++  // better-sqlite3 opened in {readonly: true} mode refused a missing
++  // file. libsql's createClient silently creates an empty database,
++  // which would let the host proceed into "no such table" errors
++  // instead of triggering handleUnrecoverableDatabaseError. Preserve
++  // the original behavior: fail closed when the path is not an
++  // existing regular file.
++  const { statSync } = require('node:fs');
    try {
 -    const db = new Sqlite3(dbPath, { readonly: true, timeout: 10000 }) as Sqlite3.Database;
 -
@@ -180,12 +213,22 @@ index eeadaea..184af93 100644
 -
 -    // Note: These are properties of the connection, so they must be set regardless
 -    // of whether the database setup queries are run.
--
++    const stat = statSync(dbPath);
++    if (!stat.isFile()) {
++      handleUnrecoverableDatabaseError(new Error(`DatabaseStore: refusing to open non-regular path: ${dbPath}`));
++      return null;
++    }
++  } catch (err) {
++    handleUnrecoverableDatabaseError(err);
++    return null;
++  }
+ 
 -    // https://www.sqlite.org/intern-v-extern-blob.html
 -    // A database page size of 8192 or 16384 gives the best performance for large BLOB I/O.
 -    db.pragma(`main.page_size = 8192`);
 -    db.pragma(`main.cache_size = 20000`);
 -    db.pragma(`main.synchronous = NORMAL`);
++  try {
 +    // libsql's file-backed client keeps a single Database per
 +    // createClient() call and forwards the `timeout` config into it
 +    // (see @libsql/client packages/libsql-client/src/sqlite3.ts). The
@@ -204,7 +247,7 @@ index eeadaea..184af93 100644
      return db;
    } catch (err) {
      handleUnrecoverableDatabaseError(err);
-@@ -72,6 +71,13 @@ async function openDatabase(dbPath: string) {
+@@ -72,6 +89,13 @@ async function openDatabase(dbPath: string) {
    }
  }
  
@@ -218,7 +261,7 @@ index eeadaea..184af93 100644
  function databasePath(configDirPath: string, specMode = false) {
    let dbPath = path.join(configDirPath, 'edgehill.db');
    if (specMode) {
-@@ -131,9 +137,8 @@ Section: Database
+@@ -131,9 +155,8 @@ Section: Database
  class DatabaseStore extends MailspringStore {
    _open = false;
    _waiting = [];
@@ -229,7 +272,7 @@ index eeadaea..184af93 100644
  
    constructor() {
      super();
-@@ -264,7 +269,6 @@ class DatabaseStore extends MailspringStore {
+@@ -264,7 +287,6 @@ class DatabaseStore extends MailspringStore {
    }
  
    async _executeLocally(query: SQLString, values: SQLValue[]) {
@@ -237,7 +280,7 @@ index eeadaea..184af93 100644
      const scheduler = new ExponentialBackoffScheduler({
        baseDelay: BASE_RETRY_LOCK_DELAY,
        maxDelay: MAX_RETRY_LOCK_DELAY,
-@@ -274,30 +278,17 @@ class DatabaseStore extends MailspringStore {
+@@ -274,30 +296,17 @@ class DatabaseStore extends MailspringStore {
  
      const retryableRegexp = new RegExp(`(database is locked)||(${schemaChangedStr})`, 'i');
  
@@ -270,7 +313,7 @@ index eeadaea..184af93 100644
          const msec = Date.now() - start;
          if (debugVerbose.enabled) {
            const q = `(${msec}ms) ${query}`;
-@@ -307,10 +298,14 @@ class DatabaseStore extends MailspringStore {
+@@ -307,10 +316,14 @@ class DatabaseStore extends MailspringStore {
          if (msec > 100) {
            const msgPrefix = msec > 100 ? 'DatabaseStore: query took more than 100ms - ' : '';
            if (query.startsWith(`SELECT `) && DEBUG_QUERY_PLANS) {
@@ -289,7 +332,7 @@ index eeadaea..184af93 100644
              const quiet = ['ThreadCounts', 'ThreadSearch', 'ContactSearch', 'COVERING INDEX'];
  
              if (!quiet.find((str) => planString.includes(str))) {
-@@ -332,11 +327,6 @@ class DatabaseStore extends MailspringStore {
+@@ -332,11 +345,6 @@ class DatabaseStore extends MailspringStore {
              `DatabaseStore: Query ${query}, ${JSON.stringify(values)} failed ${err.toString()}`
            );
          }
@@ -301,7 +344,7 @@ index eeadaea..184af93 100644
        }
        scheduler.nextDelay();
      }
-@@ -345,7 +335,7 @@ class DatabaseStore extends MailspringStore {
+@@ -345,7 +353,7 @@ class DatabaseStore extends MailspringStore {
  
    _agent?: ChildProcess;
    _agentSpawnFailed = false;
@@ -310,7 +353,7 @@ index eeadaea..184af93 100644
  
    _executeInBackground(query: SQLString, values: SQLValue[]) {
      if (!this._agent && !this._agentSpawnFailed) {
-@@ -356,21 +346,33 @@ class DatabaseStore extends MailspringStore {
+@@ -356,21 +364,33 @@ class DatabaseStore extends MailspringStore {
            this._agent.stdout.on('data', (data) => console.log(data.toString()));
          if (this._agent.stderr)
            this._agent.stderr.on('data', (data) => console.error(data.toString()));
@@ -351,7 +394,7 @@ index eeadaea..184af93 100644
          });
        } catch (err) {
          // On Windows, security software (antivirus / AppLocker) can deny the
-@@ -387,16 +389,20 @@ class DatabaseStore extends MailspringStore {
+@@ -387,16 +407,20 @@ class DatabaseStore extends MailspringStore {
      }
  
      // eslint-disable-next-line no-async-promise-executor
