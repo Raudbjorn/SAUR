@@ -12,7 +12,7 @@ url='https://github.com/bitwarden/clients/tree/main/apps/desktop'
 license=('GPL-3.0-only')
 provides=("bitwarden=$pkgver")
 conflicts=('bitwarden')
-depends=("electron$_electronversion" 'libnotify' 'org.freedesktop.secrets' 'libxtst' 'libxss' 'libnss_nis')
+depends=("electron$_electronversion" 'libnotify' 'org.freedesktop.secrets' 'libxtst' 'libxss' 'libnss_nis' 'hicolor-icon-theme')
 makedepends=('git' 'npm' 'python' 'python-setuptools' 'node-gyp' 'nodejs-lts-jod' 'jq' 'rust' 'fdupes')
 source=(bitwarden::git+https://github.com/bitwarden/clients.git#tag=desktop-v$pkgver
         messaging.main.ts.patch
@@ -55,9 +55,11 @@ prepare() {
 	# patches from opensuse
 	patch -p1 -i "$srcdir/no-sourcemaps.patch"
 	patch -p1 -i "$srcdir/remove-unnecessary-deps.patch"
-	# npm 12 disables git dependencies by default; Bitwarden pins @electron/node-gyp as a git+ssh tag in the package-lock,
-	# but `allow-git=root` rejects it because the resolved entry lives under `node_modules/@electron/node-gyp` (a child of root),
-	# so `allow-git=all` is the minimal correct opt-in (npm 12 only accepts all|none|root).
+	# npm 12's git-dep policy default is `none`; only `none|root|all` are accepted via `--allow-git`.
+	# Repo-root `package.json` declares no direct git ref — `@electron/node-gyp` is reached only
+	# transitively via `@electron/rebuild`'s lockfile-internal entry, so npm 12's Arborist check
+	# (`edge.from.isProjectRoot || isWorkspace`) fails it for `root`, and `none` rejects it outright.
+	# `all` is the narrowest flag that covers the present lockfile shape.
 	npm ci --allow-git=all
 	pushd apps/desktop/desktop_native
 	cargo fetch --locked --target "$(rustc --print host-tuple)"

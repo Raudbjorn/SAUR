@@ -20,6 +20,7 @@ pkgbase = bitwarden-electron42
 	depends = libxtst
 	depends = libxss
 	depends = libnss_nis
+	depends = hicolor-icon-theme
 	provides = bitwarden=2026.3.1
 	conflicts = bitwarden
 	source = bitwarden::git+https://github.com/bitwarden/clients.git#tag=desktop-v2026.3.1
