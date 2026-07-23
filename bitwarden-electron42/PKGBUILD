@@ -1,0 +1,149 @@
+# Maintainer: Alexander Epaneshnikov <alex19ep@archlinux.org>
+# Contributor: libertylocked <libertylocked@disroot.org>
+
+pkgname=bitwarden-electron42
+_pkgname=bitwarden
+pkgver=2026.3.1
+pkgrel=1
+_electronversion=42
+pkgdesc='Bitwarden desktop packaged for the system Electron 42 runtime'
+arch=('x86_64')
+url='https://github.com/bitwarden/clients/tree/main/apps/desktop'
+license=('GPL-3.0-only')
+provides=("bitwarden=$pkgver")
+conflicts=('bitwarden')
+depends=("electron$_electronversion" 'libnotify' 'org.freedesktop.secrets' 'libxtst' 'libxss' 'libnss_nis')
+makedepends=('git' 'npm' 'python' 'python-setuptools' 'node-gyp' 'nodejs-lts-jod' 'jq' 'rust' 'fdupes')
+source=(bitwarden::git+https://github.com/bitwarden/clients.git#tag=desktop-v$pkgver
+        messaging.main.ts.patch
+        nativelib.patch
+        native-messaging.main.ts.patch
+        no-sourcemaps.patch
+        remove-unnecessary-deps.patch
+        ${_pkgname}.sh
+        ${_pkgname}.desktop)
+sha512sums=('d24867b804be61cabdaf906cb884e3e77fb814797f960c30d8b49db996dc69400817ef4ed3afa6d6348bf7d9901292d7826a0e88aba449718d38c3f349bc7fdf'
+            '5ab18ad2debbb4ee6eabac9bee4ab27a5f94b9db352ba1759907b1777908c4ab84fb489e4d021cb1ae44ce2cc2ba9779c09ea094cf439017f665fa9b8b0af480'
+            '0a769e138c54c7600d72e66e832af43bc7157682a995a08ec0c343909fe5b7cae4a7d547507807320f783af8e282ddc16cacec19f66cc5a029cfc6c2e1cc7468'
+            'c7cb11d7ec3807d85a50fe7689eb0c9f8814ca7c562d05195c3f0c8c4f1e7448c9a56ad759c7a2a1b36be5619a858f391142da18a691baf81fcbeac1e2f1f537'
+            'c86d4df374af1b9a25b20f113947b3477e32388beec376a49a24eddd5de7f11ed4735144939c736229b2605cf9949cdd6e6d3c71366656c8352639a293da4965'
+            'f84ec229ca7b5171f09428eff7b72846e6201bc37f83a3bea49d2aa348f697c3747b1392da67e3437d9115b06061a60a5c5fdccdccfb3f233c724da5d9fe2bd8'
+            'bc9e2083b1c36f5363348f4b10a549f2327f1a52a1dc5875921bccd0c5e354f9bf897288fd73fa1178dac1276ae61e2818ff7b4fa957143c299ecc4f39efefdb'
+            'ccd3f085f54c627a393c79f257379129af90b9f04bc74c5125efd5c4eadc9a25383ce0e444431140b3cf955987e90c44b514b73a8f34f258122d197fd91c1340')
+
+prepare() {
+	cd bitwarden/apps/desktop
+
+	export npm_config_cache="$srcdir/npm_cache"
+	export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+
+	# Remove unused postinstall script (electron-rebuild)
+	sed -i '/"postinstall":/d' package.json
+
+	# Patch build to make it work with system electron
+	export SYSTEM_ELECTRON_VERSION=$(electron$_electronversion -v | sed 's/v//g')
+	export ELECTRONVERSION=$_electronversion
+	sed -i "s|@electronversion@|${ELECTRONVERSION}|" "$srcdir/bitwarden.sh"
+
+	cd ../../
+	# This patch is required to make "Start automatically on login" work
+	patch -p1 -i "$srcdir/messaging.main.ts.patch"
+	# This patch is required to make "browser integration" work
+	patch -p1 -i "$srcdir/native-messaging.main.ts.patch"
+	# rust build
+	patch -p1 -i "$srcdir/nativelib.patch"
+	# patches from opensuse
+	patch -p1 -i "$srcdir/no-sourcemaps.patch"
+	patch -p1 -i "$srcdir/remove-unnecessary-deps.patch"
+	# npm 12 disables git dependencies by default; Bitwarden pins @electron/node-gyp as a git+ssh tag in the package-lock,
+	# but `allow-git=root` rejects it because the resolved entry lives under `node_modules/@electron/node-gyp` (a child of root),
+	# so `allow-git=all` is the minimal correct opt-in (npm 12 only accepts all|none|root).
+	npm ci --allow-git=all
+	pushd apps/desktop/desktop_native
+	cargo fetch --locked --target "$(rustc --print host-tuple)"
+	popd
+}
+
+build() {
+	cd bitwarden/apps/desktop
+	electronDist=/usr/lib/electron$_electronversion
+	electronVer=$(electron$_electronversion --version | tail -c +2)
+	export npm_config_cache="$srcdir/npm_cache"
+	export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+	export CXXFLAGS="$CXXFLAGS -Wno-error"
+	pushd desktop_native
+	cargo rustc --frozen --release --package desktop_napi --lib --crate-type cdylib
+	cargo rustc --frozen --release --package desktop_proxy --bin desktop_proxy
+	mv -v target/release/*.so napi/desktop_napi.node
+	cargo build --frozen --release --package process_isolation
+	popd
+	npm run build
+	npm run clean:dist
+	mv -v desktop_native/target/release/desktop_proxy build/desktop_proxy
+	rm -fv ../../node_modules/argon2/build-tmp-napi-v3/node_gyp_bins/python3
+	fdupes build
+	pushd build
+	#JS debug symbols (unusable)
+	find -name '*.map' -type f -print -delete
+	#Source code
+	find -name '*.c' -type f -print -delete
+	find -name '*.cpp' -type f -print -delete
+	find -name '*.h' -type f -print -delete
+	find -name '*.gyp' -type f -print -delete
+	find -name '*.gypi' -type f -print -delete
+	find -name '*.ts' -type f -print -delete
+	find -name '*.cts' -type f -print -delete
+	find -name build-tmp-napi-v3  -print0 |xargs -r0 -- rm -rvf --
+	find -name src -print0 |xargs -r0 -- rm -rvf --
+	find -name Makefile -type f -print -delete
+	find -name 'Pipfile*' -type f -print -delete
+	find -name '*.patch' -type f -print -delete
+	#Temporary build files
+	find -name '.deps' -print0 |xargs -r0 -- rm -rvf --
+	find -name 'obj.target' -print0 |xargs -r0 -- rm -rvf --
+	find -name 'vendor' -print0 |xargs -r0 -- rm -rvf --
+	find -name '*package-lock.json' -type f -print -delete
+	find -name '*.mk' -type f -print -delete
+	find -name '*.Makefile' -type f -print -delete
+
+	#Documentation
+	find -name '*.md' -type f -print -delete
+	find -name doc -print0 |xargs -r0 -- rm -rvf --
+	find -name test -print0 |xargs -r0 -- rm -rvf --
+	#Compile-time-only dependencies
+	find -name nan -print0 |xargs -r0 -- rm -rvf --
+	find -name node-addon-api -print0 |xargs -r0 -- rm -rvf --
+	#Other trash
+	find -name '*.yml' -type f -print -delete
+	find -name '.npmignore' -type f -print -delete
+	find -name '.gitignore' -type f -print -delete
+
+	#Fix file mode
+	find . -type f -exec chmod 644 {} \;
+	find . -name '*.node' -exec chmod 755 {} \;
+	chmod 755 desktop_proxy
+
+	# Remove empty directories
+	find . -type d -empty -print -delete
+	popd
+	npm exec -c "electron-builder --linux --x64 --dir -c.electronDist=$electronDist \
+	             -c.electronVersion=$electronVer"
+}
+
+package(){
+	cd bitwarden/apps/desktop
+	install -vDm644 dist/linux-unpacked/resources/app.asar -t "${pkgdir}/usr/lib/${_pkgname}"
+	install -vDm644 build/package.json -t "${pkgdir}/usr/lib/${_pkgname}"
+	install -vDm755 build/desktop_proxy -t "${pkgdir}/usr/lib/${_pkgname}"
+	install -vDm755 desktop_native/target/release/libprocess_isolation.so -t "${pkgdir}/usr/lib/${_pkgname}"
+	cp -vr dist/linux-unpacked/resources/app.asar.unpacked -t "${pkgdir}/usr/lib/${_pkgname}"
+
+	for i in 16 32 64 128 256 512 1024; do
+		install -vDm644 resources/icons/${i}x${i}.png \
+			"${pkgdir}/usr/share/icons/hicolor/${i}x${i}/apps/${_pkgname}.png"
+	done
+	install -vDm644 resources/icon.png \
+		"${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/${_pkgname}.png"
+	install -vDm755 "${srcdir}/${_pkgname}.sh" "${pkgdir}/usr/bin/bitwarden-desktop"
+	install -vDm644 "${srcdir}/${_pkgname}.desktop" -t "${pkgdir}/usr/share/applications"
+}
