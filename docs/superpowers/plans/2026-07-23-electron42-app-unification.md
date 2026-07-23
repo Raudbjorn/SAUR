@@ -502,18 +502,18 @@ ldd "$bitwarden_node"
 
 Expected: `bitwarden desktop_napi loaded`, exit 0, and no `not found` library from `ldd`.
 
-- [ ] **Step 4: Load Mailspring's packaged `better-sqlite3` module**
+- [ ] **Step 4: Load Mailspring's packaged `@libsql/client` native module**
 
 Run:
 
 ```bash
-mailspring_node="$probe_root/mailspring/usr/lib/mailspring/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+mailspring_node="$probe_root/mailspring/usr/lib/mailspring/app.asar.unpacked/node_modules/@libsql/linux-x64-gnu/index.node"
 ELECTRON_RUN_AS_NODE=1 "$probe_root/electron/usr/lib/electron42/electron" \
-  -e "require(${mailspring_node@Q}); console.log('mailspring better-sqlite3 loaded')"
+  -e "require(${mailspring_node@Q}); console.log('mailspring @libsql/linux-x64-gnu loaded')"
 ldd "$mailspring_node"
 ```
 
-Expected: `mailspring better-sqlite3 loaded`, exit 0, no `NODE_MODULE_VERSION` error, no `ERR_DLOPEN_FAILED`, and no missing library.
+Expected: `mailspring @libsql/linux-x64-gnu loaded`, exit 0, no `NODE_MODULE_VERSION` error, no `ERR_DLOPEN_FAILED`, and no missing library.
 
 - [ ] **Step 5: Verify Mailspring's complete icon set**
 

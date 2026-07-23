@@ -80,21 +80,21 @@ prepare() {
     # same lines still resolves cleanly.
     #
     # Invariants (per the port brief):
-    #   * No `?mode=ro` query parameter — libsql has no readonly mode.
-    #   * No readonly constructor option (libsql/client has none).
-    #   * Read-only semantics are enforced at the application layer
-    #     (DatabaseStore never issues write SQL at runtime).
-    #   * The `HAVE_NANOSLEEP` guard is dropped: libsql's WASM/native
-    #     tls implementation does not require nanosleep — the
-    #     retry/retry-on-lock contention pattern is handled inside
-    #     @libsql/client's executor.
+    #   * `better-sqlite3` is dropped; the package uses `@libsql/client`.
+    #   * libsql has no readonly constructor / connection flag on the JS
+    #     surface, so the read-only contract is enforced via SQLite's own
+    #     `PRAGMA query_only=ON` after the mutating setup PRAGMAs (WAL,
+    #     page_size, cache_size, synchronous) have been applied. The
+    #     background agent applies the same PRAGMA immediately after
+    #     `createClient()`.
+    #   * The `HAVE_NANOSLEEP` guard is dropped: libsql's executor
+    #     handles lock-contention retry internally.
     # ------------------------------------------------------------------
     git apply --3way "${srcdir}/mailspring-turso.patch"
-    # Pin the libsql client to an exact version (the patch sets a
-    # caret range); we use `npm pkg set` rather than hand-editing the
-    # tracked manifest so the version is recorded as a programmatic
-    # post-step, not a source-tree modification.
-    npm pkg set dependencies.@libsql/client='0.17.4'
+    # Pin the libsql client to an exact version (0.17.4). The
+    # `mailspring-turso.patch` records the dependency in the tracked
+    # manifest; `npm pkg set` is a programmatic confirmation that
+    # matches the patch's recorded version.
     (cd app && npm pkg set dependencies.@libsql/client='0.17.4')
     sed -i -e "
         s/@electronversion@/${_electronversion}/g
@@ -112,17 +112,26 @@ prepare() {
     # normally do this; we skip the .deb build because dpkg-deb is
     # unavailable in the chroot, but the rendered assets are still
     # required for package()). Templates use underscore-style ERB
-    # delimiters (`<%= name %>`); we substitute them directly.
+    # delimiters (`<%= name %>`); we substitute them directly. The
+    # upstream `app/package.json` is the authoritative source for the
+    # desktop `Comment` and the AppStream `summary`; we read it once
+    # with `jq` (already a makedepend) and feed the result into both
+    # templates so the rendered strings match the upstream metadata.
     local _assets_dir="${srcdir}/${_srcname}/app/build/resources/linux"
     local _dist_dir="${srcdir}/${_srcname}/app/dist"
     install -d -m 755 "$_dist_dir"
-    sed -e 's|<%= productName %>|Mailspring|g' \
-        -e 's|<%= description %>|Mailspring|g' \
-        -e 's|<%= name %>|mailspring|g' \
+    local _app_pkg="${srcdir}/${_srcname}/app/package.json"
+    local _description _product_name _app_id
+    _description=$(jq -r '.description' "$_app_pkg")
+    _product_name=$(jq -r '.productName' "$_app_pkg")
+    _app_id=$(jq -r '.name' "$_app_pkg")
+    sed -e "s|<%= productName %>|${_product_name}|g" \
+        -e "s|<%= description %>|${_description}|g" \
+        -e "s|<%= name %>|${_app_id}|g" \
         "$_assets_dir/Mailspring.desktop.in" > "$_dist_dir/mailspring.desktop"
-    sed -e 's|<%= name %>|mailspring|g' \
-        -e 's|<%= productName %>|Mailspring|g' \
-        -e 's|<%= description %>|Mailspring|g' \
+    sed -e "s|<%= name %>|${_app_id}|g" \
+        -e "s|<%= productName %>|${_product_name}|g" \
+        -e "s|<%= description %>|${_description}|g" \
         -e 's|<%= desktopName %>|mailspring.desktop|g' \
         "$_assets_dir/mailspring.metainfo.xml.in" > "$_dist_dir/mailspring.metainfo.xml"
     if grep -q '<%' "$_dist_dir/mailspring.desktop" \
