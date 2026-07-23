@@ -15,10 +15,10 @@ index c53086e..2d9e346 100644
      "chromium-net-errors": "1.0.3",
      "chrono-node": "^2.9.0",
 diff --git a/app/src/flux/stores/database-agent.js b/app/src/flux/stores/database-agent.js
-index f809a9e..29b4ecb 100644
+index f809a9e..251dce3 100644
 --- a/app/src/flux/stores/database-agent.js
 +++ b/app/src/flux/stores/database-agent.js
-@@ -1,37 +1,87 @@
+@@ -1,37 +1,98 @@
 -const Sqlite3 = require('better-sqlite3');
 +// Database query helper forked by DatabaseStore. The host DatabaseStore
 +// only ever issues read-class statements through this channel. We enforce
@@ -81,6 +81,18 @@ index f809a9e..29b4ecb 100644
 -process.on('message', m => {
 +process.on('message', async m => {
    clearTimeout(deathTimer);
++  // Re-arm the death timer regardless of which branch returns; an
++  // open-failure path must not leave the agent alive indefinitely.
++  const rearmDeathTimer = () => {
++    clearTimeout(deathTimer);
++    deathTimer = setTimeout(() => process.exit(0), deathDelay);
++  };
++  let rearmed = false;
++  const finish = () => {
++    if (rearmed) return;
++    rearmed = true;
++    rearmDeathTimer();
++  };
    const { query, values, id, dbpath } = m;
    const start = Date.now();
  
@@ -100,13 +112,18 @@ index f809a9e..29b4ecb 100644
 +      code: err.code || 'DB_OPEN_FAILED',
 +      id,
 +    });
++    finish();
 +    return;
 +  }
  
+-    clearTimeout(deathTimer);
+-    deathTimer = setTimeout(() => process.exit(0), deathDelay);
+-  });
 +  try {
 +    const result = await db.execute({ sql: query, args: values });
 +    const rows = result && result.rows ? result.rows : [];
 +    process.send({ type: 'results', results: rows, id, agentTime: Date.now() - start });
++    finish();
 +  } catch (err) {
 +    process.send({
 +      type: 'error',
@@ -114,11 +131,7 @@ index f809a9e..29b4ecb 100644
 +      code: (err && err.code) || 'DB_QUERY_FAILED',
 +      id,
 +    });
-+    return;
-+  } finally {
-     clearTimeout(deathTimer);
-     deathTimer = setTimeout(() => process.exit(0), deathDelay);
--  });
++    finish();
 +  }
  });
 diff --git a/app/src/flux/stores/database-store.ts b/app/src/flux/stores/database-store.ts
