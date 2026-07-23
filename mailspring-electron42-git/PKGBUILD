@@ -106,9 +106,7 @@ prepare() {
     _set_build_env
     _ensure_local_nvm
     sed -i "/await createRpmInstaller/d" app/build/build.js
-    sed -i "s/execstack --clear-execstack//g" app/script/mkdeb
-    sed -i "s/\"electron\": \"[^\"]*\"/\"electron\": \"${SYSTEM_ELECTRON_VERSION}\"/g" package.json
-    sed -i "s/tmpdir,/tmpdir,\n    electronDist: process.env.ELECTRON_DIST,/" app/build/build.js
+    sed -i "/await createDebInstaller/d" app/build/build.js
     NODE_ENV=development    npm install
 }
 
