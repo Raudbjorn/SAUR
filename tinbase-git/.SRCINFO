@@ -1,7 +1,7 @@
 pkgbase = tinbase-git
 	pkgdesc = Docker-free, Supabase-compatible local backend with embedded PostgreSQL
 	pkgver = 0.10.0.r14.g8005938
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/tinbase/tinbase
 	arch = x86_64
 	license = MIT
@@ -27,7 +27,9 @@ pkgbase = tinbase-git
 	options = !debug
 	source = tinbase-src::git+https://github.com/tinbase/tinbase.git
 	source = 0001-docs-audit-JSDoc-and-comments-across-src-for-consist.patch
+	source = 0002-fix-current-supabase-compat.patch
 	sha256sums = SKIP
 	sha256sums = 36818408267765366280c6a7e8338e32934f6fc877a613c8e7677c2f61121406
+	sha256sums = ccc2fc2b9cea4488da8a904d0d0d67b8af12c99fd38a32dfaa106c7105ca837b
 
 pkgname = tinbase-git

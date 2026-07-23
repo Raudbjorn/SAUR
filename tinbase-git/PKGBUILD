@@ -2,7 +2,7 @@
 
 pkgname=tinbase-git
 pkgver=0.10.0.r14.g8005938
-pkgrel=1
+pkgrel=2
 pkgdesc='Docker-free, Supabase-compatible local backend with embedded PostgreSQL'
 arch=('x86_64')
 url='https://github.com/tinbase/tinbase'
@@ -32,14 +32,18 @@ makedepends=(
 provides=("tinbase=$pkgver")
 conflicts=('tinbase')
 _srcname='tinbase-src'
-_patch='0001-docs-audit-JSDoc-and-comments-across-src-for-consist.patch'
+_patches=(
+  '0001-docs-audit-JSDoc-and-comments-across-src-for-consist.patch'
+  '0002-fix-current-supabase-compat.patch'
+)
 source=(
   "$_srcname::git+https://github.com/tinbase/tinbase.git"
-  "$_patch"
+  "${_patches[@]}"
 )
 sha256sums=(
   'SKIP'
   '36818408267765366280c6a7e8338e32934f6fc877a613c8e7677c2f61121406'
+  'ccc2fc2b9cea4488da8a904d0d0d67b8af12c99fd38a32dfaa106c7105ca837b'
 )
 
 pkgver() {
@@ -51,12 +55,14 @@ pkgver() {
 
 prepare() {
   cd "$_srcname"
-
-  if git apply --reverse --check "$srcdir/$_patch" 2>/dev/null; then
-    printf '%s\n' 'documentation patch already applied upstream'
-  else
-    git apply "$srcdir/$_patch"
-  fi
+  local _p
+  for _p in "${_patches[@]}"; do
+    if git apply --reverse --check "$srcdir/$_p" 2>/dev/null; then
+      printf '%s\n' "patch $_p already applied upstream; skipping"
+    else
+      git apply "$srcdir/$_p"
+    fi
+  done
 
   export npm_config_cache="$srcdir/npm-cache"
   npm ci
