@@ -52,6 +52,7 @@ The package will:
 - preserve the existing system-Electron build path;
 - rebuild `better-sqlite3` and all other native modules for Electron ABI 146;
 - read `electron42-flags.conf` instead of `electron41-flags.conf` in the launcher.
+- remove the upstream recipe's `curl -s ipinfo.io/country` geolocation branch and select the standard npm/Electron registries deterministically, so clean builds have no undeclared or unbounded location probe.
 
 The recipe must not copy the currently installed Electron-41 native objects into the new package.
 
