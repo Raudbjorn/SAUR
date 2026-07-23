@@ -31,15 +31,18 @@ the `/usr/lib/mailspring` resource tree that Mailspring itself expects.
 The recipe forces `package.json` and `app/build/build.js` to advertise
 `SYSTEM_ELECTRON_VERSION` (the installed Electron 42 binary's reported
 version) so electron-builder recompiles native modules against the system
-runtime. The resulting native modules are expected to be ABI 146 (Electron 42).
+runtime. **Electron 42 and native module ABI 146 are hard requirements** —
+this package does not work against any other Electron major or against a
+Mailspring build whose native modules were compiled for a different ABI.
 
 ## Deterministic registries
 
 `_set_build_env()` is intentionally minimal: it sets the system Electron path,
 caches the reported version, pins `HOME` and `NPM_CONFIG_CACHE` under
 `${srcdir}`, and configures `NPM_CONFIG_MAXSOCKETS=32`. There is **no**
-`ipinfo.io/country` probe and **no** fallback to `npmmirror.com` /
-`registry.npmmirror.com`. The recipe uses the standard public npm registry.
+geolocation probe and **no** fallback to the upstream `npmmirror.com` /
+`registry.npmmirror.com` mirrors. The recipe uses the standard public npm
+registry.
 
 ## Build commands
 
