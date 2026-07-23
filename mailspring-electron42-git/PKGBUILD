@@ -105,16 +105,15 @@ prepare() {
     " "${srcdir}/${_appname}.sh"
     _set_build_env
     _ensure_local_nvm
-    sed -i "/await createRpmInstaller/d" app/build/build.js
-    sed -i "/await createDebInstaller/d" app/build/build.js
-    NODE_ENV=development    npm install
+    sed -i "s/\"electron\": \"[^\"]*\"/\"electron\": \"${SYSTEM_ELECTRON_VERSION}\"/g" package.json
+    sed -i "s/tmpdir,/tmpdir,\n    electronDist: process.env.ELECTRON_DIST,/" app/build/build.js
 }
 
 build() {
     cd "${srcdir}/${_srcname}"
     _set_build_env
     _ensure_local_nvm
-    NODE_ENV=production     npm run build
+    NODE_ENV=production     npm run build -- --skip-installers
 }
 
 package() {
@@ -129,10 +128,11 @@ package() {
             "${srcdir}/${_srcname}/app/build/resources/linux/icons/${_icon_size}.png" \
             "${pkgdir}/usr/share/icons/hicolor/${_icon_size}x${_icon_size}/apps/${_appname}.png"
     done
-    sed "s/${_pkgname}.desktop/${_appname}.desktop/g" -i \
-        "${srcdir}/${_srcname}/app/dist/${_appname}.metainfo.xml"
+    local _metainfo="${srcdir}/${_srcname}/app/dist/mailspring.metainfo.xml"
+    [[ -f "$_metainfo" ]] || _metainfo="${srcdir}/${_srcname}/app/dist/${_appname}.metainfo.xml"
+    sed "s/${_pkgname}.desktop/${_appname}.desktop/g" -i "$_metainfo"
     install -Dm644 "${srcdir}/${_srcname}/app/dist/${_pkgname}.desktop" \
         "${pkgdir}/usr/share/applications/${_appname}.desktop"
-    install -Dm644 "${srcdir}/${_srcname}/app/dist/${_appname}.metainfo.xml" \
+    install -Dm644 "$_metainfo" \
         -t "${pkgdir}/usr/share/metainfo"
 }
