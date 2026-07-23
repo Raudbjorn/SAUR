@@ -1,0 +1,111 @@
+# Maintainer: svnbjrn <svnbjrn at sveinbjorn dot dev>
+# Based on the AUR mailspring-git recipe (zxp19821005) at commit 14194ab0d7e380694ecb9e7b31ccd6dd3267010c
+pkgname=mailspring-electron42-git
+_pkgname=Mailspring
+_appname=mailspring
+_srcname=mailspring.git
+_electronversion=42
+_nodeversion=22
+pkgver=1.23.0.r0.g5b37181
+pkgrel=1
+pkgdesc='Mailspring Git packaged for the system Electron 42 runtime'
+arch=('x86_64')
+url="https://getmailspring.com/"
+_ghurl="https://github.com/Foundry376/Mailspring"
+license=('GPL-3.0-or-later')
+conflicts=('mailspring' 'mailspring-git')
+provides=("mailspring=${pkgver%.r*}")
+depends=(
+    'electron42'
+    'db5.3'
+)
+makedepends=(
+    'npm'
+    'git'
+    'nvm'
+    'curl'
+    'gendesk'
+    'jq'
+)
+source=(
+    "${_srcname}::git+${_ghurl}.git"
+    "${_appname}.sh"
+)
+sha256sums=('SKIP'
+            'a774c2f54fbbeeaac3cefc0f7250796d30c86d27f0fd40b7eaf9c0fdb021623d')
+
+pkgver() {
+    cd "${srcdir}/${_srcname}"
+    set -o pipefail
+    git describe --long --tags --abbrev=7 | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/v//g' ||
+    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+_ensure_local_nvm() {
+    export NVM_DIR="${srcdir}/.nvm"
+    source /usr/share/nvm/init-nvm.sh || [[ $? != 1 ]]
+    nvm install "${_nodeversion}"
+    nvm use "${_nodeversion}"
+}
+
+_get_app_dir() {
+    find "${srcdir}" -type f -name "resources.pak" -exec dirname {} + | head -n 1
+}
+
+# Deterministic build environment: standard npm registry, no geolocation probe,
+# no geography-dependent mirror selection. SYSTEM_ELECTRON_VERSION pins the
+# system Electron 42 binary so native modules and electron-builder rebuild
+# against the installed runtime.
+_set_build_env() {
+    export ELECTRON_DIST="/usr/lib/electron${_electronversion}"
+    export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+    export SYSTEM_ELECTRON_VERSION="$(electron${_electronversion} -v | sed 's/v//g')"
+    export HOME="${srcdir}/.electron-gyp"
+    export NPM_CONFIG_CACHE="${srcdir}/.npm_cache"
+    export NPM_CONFIG_MAXSOCKETS=32
+}
+
+prepare() {
+    cd "${srcdir}/${_srcname}"
+    sed -i -e "
+        s/@electronversion@/${_electronversion}/g
+        s/@appname@/${_appname}/g
+        s/@runname@/app.asar/g
+        s/@cfgdirname@/${_pkgname}/
+        s/@options@/env ELECTRON_OZONE_PLATFORM_HINT=auto --password-store=\"gnome-libsecret\"/g
+    " "${srcdir}/${_appname}.sh"
+    _set_build_env
+    _ensure_local_nvm
+    sed -i "/await createRpmInstaller/d" app/build/build.js
+    sed -i "s/execstack --clear-execstack//g" app/script/mkdeb
+    sed -i "s/\"electron\": \"[^\"]*\"/\"electron\": \"${SYSTEM_ELECTRON_VERSION}\"/g" package.json
+    sed -i "s/tmpdir,/tmpdir,\n    electronDist: process.env.ELECTRON_DIST,/" app/build/build.js
+    NODE_ENV=development    npm install
+}
+
+build() {
+    cd "${srcdir}/${_srcname}"
+    _set_build_env
+    _ensure_local_nvm
+    NODE_ENV=production     npm run build
+}
+
+package() {
+    install -Dm755 "${srcdir}/${_appname}.sh" "${pkgdir}/usr/bin/${_appname}"
+    install -Dm755 -d "${pkgdir}/usr/lib/${_appname}"
+    local _app_dir
+    _app_dir="$(_get_app_dir)"
+    cp -a "${_app_dir}/resources/"* "${pkgdir}/usr/lib/${_appname}/"
+    _icon_sizes=(16 32 64 128 256 512)
+    for _icon_size in "${_icon_sizes[@]}"; do
+        install -Dm644 \
+            "${srcdir}/${_srcname}/app/build/resources/linux/icons/${_icon_size}.png" \
+            "${pkgdir}/usr/share/icons/hicolor/${_icon_size}x${_icon_size}/apps/${_appname}.png"
+    done
+    sed "s/${_pkgname}.desktop/${_appname}.desktop/g" -i \
+        "${srcdir}/${_srcname}/app/dist/${_appname}.metainfo.xml"
+    install -Dm644 "${srcdir}/${_srcname}/app/dist/${_pkgname}.desktop" \
+        "${pkgdir}/usr/share/applications/${_appname}.desktop"
+    install -Dm644 "${srcdir}/${_srcname}/app/dist/${_appname}.metainfo.xml" \
+        -t "${pkgdir}/usr/share/metainfo"
+}
