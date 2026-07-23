@@ -15,10 +15,10 @@ index c53086e..2d9e346 100644
      "chromium-net-errors": "1.0.3",
      "chrono-node": "^2.9.0",
 diff --git a/app/src/flux/stores/database-agent.js b/app/src/flux/stores/database-agent.js
-index f809a9e..251dce3 100644
+index f809a9e..9cf59b2 100644
 --- a/app/src/flux/stores/database-agent.js
 +++ b/app/src/flux/stores/database-agent.js
-@@ -1,37 +1,98 @@
+@@ -1,37 +1,112 @@
 -const Sqlite3 = require('better-sqlite3');
 +// Database query helper forked by DatabaseStore. The host DatabaseStore
 +// only ever issues read-class statements through this channel. We enforce
@@ -32,8 +32,33 @@ index f809a9e..251dce3 100644
  
  const deathDelay = 5000;
  let deathTimer = setTimeout(() => process.exit(0), deathDelay);
++let activeQueries = 0;
  
 -function getDatabase(dbpath) {
++function armDeathTimer() {
++  clearTimeout(deathTimer);
++  deathTimer = setTimeout(() => process.exit(0), deathDelay);
++}
++
++// Re-arm the death timer when the in-flight query count returns to
++// zero. This avoids a concurrency race where a sibling query still
++// holds a connection while the just-completed handler resets the
++// timer to 5s — which is shorter than the configured 10s busy
++// timeout and would let the agent exit mid-query under load.
++function noteQueryStart() {
++  activeQueries += 1;
++  // A new query is in flight; cancel the pending exit so we don't
++  // tear the process down before the next finish.
++  clearTimeout(deathTimer);
++}
++function noteQueryDone() {
++  activeQueries -= 1;
++  if (activeQueries <= 0) {
++    activeQueries = 0;
++    armDeathTimer();
++  }
++}
++
 +class DbOpenError extends Error {
 +  constructor(err) {
 +    super((err && err.toString) ? err.toString() : String(err));
@@ -52,12 +77,21 @@ index f809a9e..251dce3 100644
    if (dbs[dbpath]) {
 -    return Promise.resolve(dbs[dbpath]);
 +    return dbs[dbpath];
++  }
++
++  let client;
++  try {
++    client = await createClient({ url: 'file:' + dbpath, timeout: 10000 });
++  } catch (err) {
++    throw new DbOpenError(err);
    }
  
-+  let client;
++  // PRAGMA query_only=ON makes SQLite reject every statement that would
++  // write to the database. The flag is a property of the connection, so
++  // it persists for the lifetime of this client.
    try {
 -    dbs[dbpath] = new Sqlite3(dbpath, { readonly: true, timeout: 10000 });
-+    client = await createClient({ url: 'file:' + dbpath, timeout: 10000 });
++    await client.execute({ sql: 'PRAGMA query_only = ON' });
    } catch (err) {
 -    console.error(err);
 -    process.exit(1);
@@ -65,73 +99,58 @@ index f809a9e..251dce3 100644
    }
  
 -  return Promise.resolve(dbs[dbpath]);
-+  // PRAGMA query_only=ON makes SQLite reject every statement that would
-+  // write to the database. The flag is a property of the connection, so
-+  // it persists for the lifetime of this client.
-+  try {
-+    await client.execute({ sql: 'PRAGMA query_only = ON' });
-+  } catch (err) {
-+    throw new DbOpenError(err);
-+  }
-+
 +  dbs[dbpath] = client;
 +  return client;
  }
  
 -process.on('message', m => {
-+process.on('message', async m => {
-   clearTimeout(deathTimer);
-+  // Re-arm the death timer regardless of which branch returns; an
-+  // open-failure path must not leave the agent alive indefinitely.
-+  const rearmDeathTimer = () => {
-+    clearTimeout(deathTimer);
-+    deathTimer = setTimeout(() => process.exit(0), deathDelay);
-+  };
-+  let rearmed = false;
-+  const finish = () => {
-+    if (rearmed) return;
-+    rearmed = true;
-+    rearmDeathTimer();
-+  };
-   const { query, values, id, dbpath } = m;
-   const start = Date.now();
- 
+-  clearTimeout(deathTimer);
+-  const { query, values, id, dbpath } = m;
+-  const start = Date.now();
+-
 -  getDatabase(dbpath).then(db => {
 -    clearTimeout(deathTimer);
 -    const fn = query.startsWith('SELECT') ? 'all' : 'run';
 -    const stmt = db.prepare(query);
 -    const results = stmt[fn](values);
 -    process.send({ type: 'results', results, id, agentTime: Date.now() - start });
-+  let db;
-+  try {
-+    db = await getDatabase(dbpath);
-+  } catch (err) {
-+    process.send({
-+      type: 'error',
-+      error: err.toString(),
-+      code: err.code || 'DB_OPEN_FAILED',
-+      id,
-+    });
-+    finish();
-+    return;
-+  }
- 
+-
 -    clearTimeout(deathTimer);
 -    deathTimer = setTimeout(() => process.exit(0), deathDelay);
 -  });
++process.on('message', async m => {
++  noteQueryStart();
 +  try {
-+    const result = await db.execute({ sql: query, args: values });
-+    const rows = result && result.rows ? result.rows : [];
-+    process.send({ type: 'results', results: rows, id, agentTime: Date.now() - start });
-+    finish();
-+  } catch (err) {
-+    process.send({
-+      type: 'error',
-+      error: (err && err.toString) ? err.toString() : String(err),
-+      code: (err && err.code) || 'DB_QUERY_FAILED',
-+      id,
-+    });
-+    finish();
++    const { query, values, id, dbpath } = m;
++    const start = Date.now();
++
++    let db;
++    try {
++      db = await getDatabase(dbpath);
++    } catch (err) {
++      process.send({
++        type: 'error',
++        error: err.toString(),
++        code: err.code || 'DB_OPEN_FAILED',
++        id,
++      });
++      return;
++    }
++
++    try {
++      const result = await db.execute({ sql: query, args: values });
++      const rows = result && result.rows ? result.rows : [];
++      process.send({ type: 'results', results: rows, id, agentTime: Date.now() - start });
++    } catch (err) {
++      process.send({
++        type: 'error',
++        error: (err && err.toString) ? err.toString() : String(err),
++        code: (err && err.code) || 'DB_QUERY_FAILED',
++        id,
++      });
++    }
++  } finally {
++    noteQueryDone();
 +  }
  });
 diff --git a/app/src/flux/stores/database-store.ts b/app/src/flux/stores/database-store.ts
