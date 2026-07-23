@@ -91,11 +91,9 @@ prepare() {
     #     handles lock-contention retry internally.
     # ------------------------------------------------------------------
     git apply --3way "${srcdir}/mailspring-turso.patch"
-    # Pin the libsql client to an exact version (0.17.4). The
-    # `mailspring-turso.patch` records the dependency in the tracked
-    # manifest; `npm pkg set` is a programmatic confirmation that
-    # matches the patch's recorded version.
-    (cd app && npm pkg set dependencies.@libsql/client='0.17.4')
+    # The tracked `mailspring-turso.patch` is the single source of the
+    # exact `@libsql/client` pin (0.17.4); we do not re-pin it here so
+    # the patch remains authoritative.
     sed -i -e "
         s/@electronversion@/${_electronversion}/g
         s/@appname@/${_appname}/g
