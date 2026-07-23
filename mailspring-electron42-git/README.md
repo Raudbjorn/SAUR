@@ -23,9 +23,9 @@ the `/usr/lib/mailspring` resource tree that Mailspring itself expects.
 
 ## Runtime requirements
 
-- `electron42` — provides the system Electron 42 binary
-  (`/usr/lib/electron42/electron42`) that loads `app.asar` and the bundled
-  native modules.
+- `electron42` — provides the system Electron 42 binary at
+  `/usr/lib/electron42/electron` (invoked as the `electron42` command) that
+  loads `app.asar` and the bundled native modules.
 - `db5.3` — Berkeley DB libraries Mailspring links against.
 
 The recipe forces `package.json` and `app/build/build.js` to advertise
