@@ -107,6 +107,29 @@ prepare() {
     _ensure_local_nvm
     sed -i "s/\"electron\": \"[^\"]*\"/\"electron\": \"${SYSTEM_ELECTRON_VERSION}\"/g" package.json
     sed -i "s/tmpdir,/tmpdir,\n    electronDist: process.env.ELECTRON_DIST,/" app/build/build.js
+    NODE_ENV=development    npm install
+    # Render .desktop and .metainfo templates (createDebInstaller would
+    # normally do this; we skip the .deb build because dpkg-deb is
+    # unavailable in the chroot, but the rendered assets are still
+    # required for package()). Templates use underscore-style ERB
+    # delimiters (`<%= name %>`); we substitute them directly.
+    local _assets_dir="${srcdir}/${_srcname}/app/build/resources/linux"
+    local _dist_dir="${srcdir}/${_srcname}/app/dist"
+    install -d -m 755 "$_dist_dir"
+    sed -e 's|<%= productName %>|Mailspring|g' \
+        -e 's|<%= description %>|Mailspring|g' \
+        -e 's|<%= name %>|mailspring|g' \
+        "$_assets_dir/Mailspring.desktop.in" > "$_dist_dir/mailspring.desktop"
+    sed -e 's|<%= name %>|mailspring|g' \
+        -e 's|<%= productName %>|Mailspring|g' \
+        -e 's|<%= description %>|Mailspring|g' \
+        -e 's|<%= desktopName %>|mailspring.desktop|g' \
+        "$_assets_dir/mailspring.metainfo.xml.in" > "$_dist_dir/mailspring.metainfo.xml"
+    if grep -q '<%' "$_dist_dir/mailspring.desktop" \
+        || grep -q '<%' "$_dist_dir/mailspring.metainfo.xml"; then
+        echo "Unrendered template placeholders in desktop/metainfo" >&2
+        return 1
+    fi
 }
 
 build() {
@@ -128,11 +151,9 @@ package() {
             "${srcdir}/${_srcname}/app/build/resources/linux/icons/${_icon_size}.png" \
             "${pkgdir}/usr/share/icons/hicolor/${_icon_size}x${_icon_size}/apps/${_appname}.png"
     done
-    local _metainfo="${srcdir}/${_srcname}/app/dist/mailspring.metainfo.xml"
-    [[ -f "$_metainfo" ]] || _metainfo="${srcdir}/${_srcname}/app/dist/${_appname}.metainfo.xml"
-    sed "s/${_pkgname}.desktop/${_appname}.desktop/g" -i "$_metainfo"
-    install -Dm644 "${srcdir}/${_srcname}/app/dist/${_pkgname}.desktop" \
+    local _dist="${srcdir}/${_srcname}/app/dist"
+    install -Dm644 "${_dist}/mailspring.desktop" \
         "${pkgdir}/usr/share/applications/${_appname}.desktop"
-    install -Dm644 "$_metainfo" \
+    install -Dm644 "${_dist}/mailspring.metainfo.xml" \
         -t "${pkgdir}/usr/share/metainfo"
 }
