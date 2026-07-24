@@ -480,8 +480,8 @@ index 4cb4e09..f5ee538 100644
 -    process.exit(1001);
 -  }
 +  // SAUR note: the upstream HAVE_NANOSLEEP guard was tied to better-sqlite3.
-+  // The Turso/libsql port does not require nanosleep; libsql's executor
-+  // retries on lock contention internally. See mailspring-turso.patch.
++  // The libsql port drops it: the local file client's `timeout` (busy_timeout)
++  // option handles SQLite lock waits, and app-level backoff retries locks.
  
    // write the marker with the electron version
    fs.writeFileSync(cacheVersionPath, npmElectronTarget);

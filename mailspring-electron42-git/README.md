@@ -13,7 +13,8 @@ native modules against the installed Electron 42 binary.
 - Desktop entry: `/usr/share/applications/mailspring.desktop`
 - Metainfo: `/usr/share/metainfo/mailspring.metainfo.xml`
 - Icons: `/usr/share/icons/hicolor/{16,32,64,128,256,512}x{...}/apps/mailspring.png`
-- `provides`: `mailspring=<upstream-major>.<upstream-minor>`
+- `provides`: `mailspring=<upstream-major>.<upstream-minor>.<upstream-patch>`
+  (`${pkgver%.r*}`, e.g. `1.23.0`)
 - `conflicts`: `mailspring`, `mailspring-git`
 
 The application paths are derived from `_appname` (the installed name) rather
@@ -30,19 +31,42 @@ the `/usr/lib/mailspring` resource tree that Mailspring itself expects.
 
 The recipe forces `package.json` and `app/build/build.js` to advertise
 `SYSTEM_ELECTRON_VERSION` (the installed Electron 42 binary's reported
-version) so electron-builder recompiles native modules against the system
-runtime. **Electron 42 and native module ABI 146 are hard requirements** —
-this package does not work against any other Electron major or against a
-Mailspring build whose native modules were compiled for a different ABI.
+version) so electron-builder rebuilds any remaining compiled native modules
+against the system runtime. **Electron 42 is a hard requirement** — this
+package does not work against any other Electron major. The database layer is
+the exception to the ABI story: it is ported to libsql (see below), which
+ships an ABI-stable prebuilt binding.
+
+## Database (Turso/libsql port)
+
+`mailspring-turso.patch` replaces upstream's `better-sqlite3` dependency with
+`@libsql/client` (Turso's libsql binding, pinned to `0.17.4` in the patch):
+
+- **No per-ABI native rebuild.** `@libsql/client` ships a prebuilt N-API
+  binding (`@libsql/linux-x64-gnu/index.node`) that is ABI-stable across
+  Electron/Node majors, so the database layer needs no recompilation for
+  Electron 42's ABI.
+- **Read-only enforcement.** libsql exposes no read-only connection flag on
+  its JS surface, so the read-only contract is enforced with SQLite's own
+  `PRAGMA query_only = ON`, applied after the mutating setup PRAGMAs (WAL,
+  page_size, cache_size, synchronous) and held for the connection's lifetime.
+- **Lock handling.** The local file client's `timeout` (busy_timeout) option
+  handles SQLite lock waits; `DatabaseStore`'s exponential backoff retries
+  transient "database is locked" errors at the application level.
+
+Refresh the patch's `sha256sum` and regenerate `.SRCINFO` whenever the patch
+is rebased onto a newer upstream revision.
 
 ## Deterministic registries
 
-`_set_build_env()` is intentionally minimal: it sets the system Electron path,
-caches the reported version, pins `HOME` and `NPM_CONFIG_CACHE` under
-`${srcdir}`, and configures `NPM_CONFIG_MAXSOCKETS=32`. There is **no**
-geolocation probe and **no** fallback to the upstream `npmmirror.com` /
-`registry.npmmirror.com` mirrors. The recipe uses the standard public npm
-registry.
+`_set_build_env()` sets the system Electron path, caches the reported version,
+pins `HOME` and `NPM_CONFIG_CACHE` under `${srcdir}`, and configures
+`NPM_CONFIG_MAXSOCKETS=32`. It also pins `NPM_CONFIG_REGISTRY` to the public
+`https://registry.npmjs.org/` and points `npm_config_userconfig` /
+`npm_config_globalconfig` at `/dev/null` so an inherited user or global
+`.npmrc` cannot redirect downloads. There is **no** geolocation probe and
+**no** fallback to the upstream `npmmirror.com` / `registry.npmmirror.com`
+mirrors.
 
 ## Build commands
 
@@ -100,7 +124,7 @@ The package version is taken from `git describe` against the upstream
 ```bash
 makepkg --verifysource    # refresh the local source clone
 makepkg --printsrcinfo > .SRCINFO
-git diff PKGBUILD .SRCINFO mailspring.sh README.md
+git diff PKGBUILD .SRCINFO mailspring.sh mailspring-turso.patch README.md
 ```
 
 Always inspect the diff before committing the regenerated metadata.

@@ -50,7 +50,7 @@ The package will:
 - conflict with both `mailspring` and `mailspring-git`;
 - retain `/usr/bin/mailspring`, `/usr/share/applications/mailspring.desktop`, and `/usr/lib/mailspring`;
 - preserve the existing system-Electron build path;
-- rebuild `better-sqlite3` and all other native modules for Electron ABI 146;
+- port the database layer from `better-sqlite3` to `@libsql/client`, whose prebuilt N-API binding (`@libsql/linux-x64-gnu/index.node`) is ABI-stable and needs no per-Electron rebuild; validate that binding loads under Electron 42 (ABI 146) in the native-module gate, and rebuild any other compiled native addons against Electron 42;
 - read `electron42-flags.conf` instead of `electron41-flags.conf` in the launcher.
 - remove the upstream recipe's `curl -s ipinfo.io/country` geolocation branch and select the standard npm/Electron registries deterministically, so clean builds have no undeclared or unbounded location probe.
 - fix the upstream icon loop to iterate over `_icon_sizes`, then verify that the package archive contains 16, 32, 64, 128, 256, and 512 pixel application icons.
@@ -133,7 +133,7 @@ Tests must not open the production credential or mail profiles.
 - Do not connect a mail account.
 - Start the packaged application under Electron 42.
 - Confirm the process remains alive long enough to render its initial setup window.
-- Verify `better-sqlite3` loads without ABI errors and that startup does not modify the production Mailspring profile.
+- Verify the packaged `@libsql/linux-x64-gnu/index.node` binding loads without ABI errors and that startup does not modify the production Mailspring profile.
 - Close the isolated process and remove the temporary profile.
 
 A successful process start without native-module errors is necessary but not sufficient. Both applications must render their initial window and exit cleanly before Electron 39 or 41 is removed.

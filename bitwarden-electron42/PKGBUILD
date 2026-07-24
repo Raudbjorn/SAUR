@@ -28,7 +28,7 @@ sha512sums=('d24867b804be61cabdaf906cb884e3e77fb814797f960c30d8b49db996dc6940081
             'c7cb11d7ec3807d85a50fe7689eb0c9f8814ca7c562d05195c3f0c8c4f1e7448c9a56ad759c7a2a1b36be5619a858f391142da18a691baf81fcbeac1e2f1f537'
             'c86d4df374af1b9a25b20f113947b3477e32388beec376a49a24eddd5de7f11ed4735144939c736229b2605cf9949cdd6e6d3c71366656c8352639a293da4965'
             'f84ec229ca7b5171f09428eff7b72846e6201bc37f83a3bea49d2aa348f697c3747b1392da67e3437d9115b06061a60a5c5fdccdccfb3f233c724da5d9fe2bd8'
-            'bc9e2083b1c36f5363348f4b10a549f2327f1a52a1dc5875921bccd0c5e354f9bf897288fd73fa1178dac1276ae61e2818ff7b4fa957143c299ecc4f39efefdb'
+            '8092a622bcfd2b9bafe3d37a79cb7d7201d25ac2551c0e12d260a3a92712b333721446c9d6203e4ce819ab13a359f9c3cb8e9a4e01353a03e74c798cb5e6af17'
             'ccd3f085f54c627a393c79f257379129af90b9f04bc74c5125efd5c4eadc9a25383ce0e444431140b3cf955987e90c44b514b73a8f34f258122d197fd91c1340')
 
 prepare() {
@@ -83,7 +83,7 @@ build() {
 	npm run clean:dist
 	mv -v desktop_native/target/release/desktop_proxy build/desktop_proxy
 	rm -fv ../../node_modules/argon2/build-tmp-napi-v3/node_gyp_bins/python3
-	fdupes build
+	fdupes --recurse --linkhard build
 	pushd build
 	#JS debug symbols (unusable)
 	find -name '*.map' -type f -print -delete

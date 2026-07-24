@@ -13,6 +13,7 @@ pkgbase = mailspring-electron42-git
 	makedepends = jq
 	depends = electron42
 	depends = db5.3
+	depends = hicolor-icon-theme
 	provides = mailspring=1.23.0
 	conflicts = mailspring
 	conflicts = mailspring-git
@@ -20,7 +21,7 @@ pkgbase = mailspring-electron42-git
 	source = mailspring.sh
 	source = mailspring-turso.patch
 	sha256sums = SKIP
-	sha256sums = a774c2f54fbbeeaac3cefc0f7250796d30c86d27f0fd40b7eaf9c0fdb021623d
-	sha256sums = 75a4aa7d43f2cbeba382323590954ab8a5098c00266edc25c9e53768414d5a4c
+	sha256sums = b17ea2239c999ae8f418a538f23d6af7a1c219aff0ebc15878cb6da11024b63b
+	sha256sums = 049802ab9dcb3f4e6efcb039e5c50ce13dd6ddbff5a44f59606d83a3edcce0b3
 
 pkgname = mailspring-electron42-git

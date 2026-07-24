@@ -9,7 +9,7 @@ export ELECTRON_FORCE_IS_PACKAGED=true
 export ELECTRON_DISABLE_SECURITY_WARNINGS=true
 export NODE_ENV=production
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-export LD_LIBRARY_PATH="${_APPDIR}/lib:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${_APPDIR}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 # 1. Display System Optimization (X11 & Wayland)
 # Use 'auto' to allow modern Electron (v20+) to detect the best platform
@@ -21,14 +21,14 @@ export ELECTRON_OZONE_PLATFORM_HINT="${ELECTRON_OZONE_PLATFORM_HINT:-auto}"
 export CHROME_DESKTOP="@appname@.desktop"
 
 # Fix for Electron's trash implementation on different DEs
-case "${XDG_CURRENT_DESKTOP}" in
-    KDE)
-        export ELECTRON_TRASH="kioclient5"
+case ":${XDG_CURRENT_DESKTOP}:" in
+    *:KDE:*)
+        export ELECTRON_TRASH="kioclient"
         ;;
-    GNOME)
+    *:GNOME:*)
         export ELECTRON_TRASH="gio"
         ;;
-    XFCE)
+    *:XFCE:*)
         export ELECTRON_TRASH="gvfs-trash"
         ;;
     *)
@@ -70,4 +70,4 @@ if [[ "${EUID}" -eq 0 ]] && [[ "${ELECTRON_RUN_AS_NODE}" != "1" ]]; then
 fi
 
 cd "${_APPDIR}"
-exec electron@electronversion@ "${flags[@]}" "${_SANDBOX_ARG[@]}" "${_RUNNAME}" "$@"
+exec electron@electronversion@ "${flags[@]}" "${_SANDBOX_ARG[@]}" --password-store=gnome-libsecret "${_RUNNAME}" "$@"

@@ -311,6 +311,9 @@ _set_build_env() {
     export HOME="${srcdir}/.electron-gyp"
     export NPM_CONFIG_CACHE="${srcdir}/.npm_cache"
     export NPM_CONFIG_MAXSOCKETS=32
+    export NPM_CONFIG_REGISTRY="https://registry.npmjs.org/"
+    export npm_config_userconfig=/dev/null
+    export npm_config_globalconfig=/dev/null
 }
 ```
 
@@ -567,12 +570,27 @@ Run:
 
 ```bash
 pacman -Dk > /tmp/pacman-Dk.before-electron42.txt 2>&1 || true
-pacman -Q bitwarden mailspring-git electron39 electron41-bin
-ls -l /var/cache/pacman/pkg/bitwarden-*.pkg.tar.zst /var/cache/pacman/pkg/electron39-*.pkg.tar.zst
+
+# Record the installed rollback baseline (versions only; no account,
+# mail, or credential data is read).
+pacman -Q bitwarden mailspring-git electron39 electron41-bin \
+  | tee /tmp/rollback-installed.before-electron42.txt
+
+# Confirm each rollback artifact is re-obtainable before replacing it:
+# either a cached package archive or a resolvable repo/AUR source.
+ls -l /var/cache/pacman/pkg/bitwarden-*.pkg.tar.zst \
+      /var/cache/pacman/pkg/electron39-*.pkg.tar.zst \
+      /var/cache/pacman/pkg/electron41-bin-*.pkg.tar.zst \
+      /var/cache/pacman/pkg/mailspring-git-*.pkg.tar.zst 2>&1 \
+  | tee /tmp/rollback-cache.before-electron42.txt
 pacman -Si bitwarden electron39 electron42 db5.3
+paru -Si mailspring-git electron41-bin
 ```
 
-Also confirm `paru -Si mailspring-git` resolves the supported rollback package. Do not expose mail or password-manager data.
+Every rollback target — Bitwarden, Electron 39, Electron 41 (`electron41-bin`),
+and the AUR Mailspring recipe — must resolve to a cached archive or an
+installable source before proceeding. The commands above read only package
+metadata; they do not open mail or password-manager data.
 
 - [ ] **Step 2: Ensure package managers and applications are quiescent**
 
@@ -591,9 +609,21 @@ Resolve exact archive paths:
 
 ```bash
 _saur_root=$(git rev-parse --show-toplevel)
-bitwarden_pkg=$(cd "$_saur_root/bitwarden-electron42" && makepkg --packagelist)
-mailspring_pkg=$(cd "$_saur_root/mailspring-electron42-git" && makepkg --packagelist)
+bitwarden_pkg_local=$(cd "$_saur_root/bitwarden-electron42" && makepkg --packagelist)
+mailspring_pkg_local=$(cd "$_saur_root/mailspring-electron42-git" && makepkg --packagelist)
 electron42_pkg=/var/cache/pacman/pkg/electron42-42.7.1-1-x86_64.pkg.tar.zst
+
+# `pacman -U` runs on sveinbjorn, so the two locally built archives must be
+# staged to a path sveinbjorn can read. electron42_pkg already lives in
+# sveinbjorn's package cache and is used in place.
+_stage=/var/cache/pacman/pkg
+for _p in "$bitwarden_pkg_local" "$mailspring_pkg_local"; do
+    zstd -t "$_p"                                      # integrity-check the local archive
+    scp "$_p" "sveinbjorn:${_stage}/"
+    ssh sveinbjorn test -r "${_stage}/$(basename "$_p")"   # confirm readable on sveinbjorn
+done
+bitwarden_pkg="${_stage}/$(basename "$bitwarden_pkg_local")"
+mailspring_pkg="${_stage}/$(basename "$mailspring_pkg_local")"
 ```
 
 Run through elevation:
@@ -851,7 +881,8 @@ Run from the SAUR root:
 git diff --check
 (
   cd bitwarden-electron42
-  bash -n PKGBUILD bitwarden.sh
+  bash -n PKGBUILD
+  bash -n bitwarden.sh
   tmp=$(mktemp)
   makepkg --printsrcinfo > "$tmp"
   cmp -s .SRCINFO "$tmp"
@@ -859,7 +890,8 @@ git diff --check
 )
 (
   cd mailspring-electron42-git
-  bash -n PKGBUILD mailspring.sh
+  bash -n PKGBUILD
+  bash -n mailspring.sh
   tmp=$(mktemp)
   makepkg --printsrcinfo > "$tmp"
   cmp -s .SRCINFO "$tmp"
