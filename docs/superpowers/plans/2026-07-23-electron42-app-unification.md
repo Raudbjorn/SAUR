@@ -62,7 +62,7 @@ Expected: the destination contains the official recipe and all source-array file
 Run:
 
 ```bash
-cd /home/svnbjrn/dev/projects/SAUR/bitwarden-electron42
+cd "$(git rev-parse --show-toplevel)/bitwarden-electron42"
 makepkg --printsrcinfo | awk '
   /^\s*pkgbase =/ { base=$3 }
   /^\s*depends = electron42$/ { e42=1 }
@@ -260,7 +260,7 @@ Expected: only `PKGBUILD` and `mailspring.sh` are imported; no AUR `.git` direct
 Run:
 
 ```bash
-cd /home/svnbjrn/dev/projects/SAUR/mailspring-electron42-git
+cd "$(git rev-parse --show-toplevel)/mailspring-electron42-git"
 python -c 'import subprocess; s=subprocess.run(["makepkg","--printsrcinfo"],check=True,text=True,capture_output=True).stdout; assert "\tdepends = electron42\n" not in s'
 python -c 'from pathlib import Path; s=Path("PKGBUILD").read_text(); assert "ipinfo.io/country" in s'
 python -c 'from pathlib import Path; s=Path("PKGBUILD").read_text(); assert "for _icon_size in \"${_icon_size[@]}\"" in s'
@@ -590,8 +590,9 @@ Expected: no package transaction. If either application is active, close it norm
 Resolve exact archive paths:
 
 ```bash
-bitwarden_pkg=$(cd /home/svnbjrn/dev/projects/SAUR/bitwarden-electron42 && makepkg --packagelist)
-mailspring_pkg=$(cd /home/svnbjrn/dev/projects/SAUR/mailspring-electron42-git && makepkg --packagelist)
+_saur_root=$(git rev-parse --show-toplevel)
+bitwarden_pkg=$(cd "$_saur_root/bitwarden-electron42" && makepkg --packagelist)
+mailspring_pkg=$(cd "$_saur_root/mailspring-electron42-git" && makepkg --packagelist)
 electron42_pkg=/var/cache/pacman/pkg/electron42-42.7.1-1-x86_64.pkg.tar.zst
 ```
 
