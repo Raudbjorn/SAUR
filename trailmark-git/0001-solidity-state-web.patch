@@ -1,0 +1,3237 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5a89a8a..a2f1e09 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,14 @@
+ # Changelog
+ 
++## Unreleased
++
++- Add a syntactic state web for Solidity: `STATE_VARIABLE` nodes plus `READS`/
++  `WRITES` edges from functions to the contract state variables they access.
++  Extraction is compile-free (tree-sitter only) and confidence-tagged `certain`
++  for state variables declared on the contract; parameters and local variables
++  are excluded. Resolved/type-resolved state (cross-contract, slot layout)
++  remains out of scope.
++
+ ## 0.5.0
+ 
+ - Pin `tree-sitter` to the compatible 0.25 series, with large-file native-crash
+diff --git a/README.md b/README.md
+index a26f396..05a7264 100644
+--- a/README.md
++++ b/README.md
+@@ -195,11 +195,11 @@ classDiagram
+     CodeGraph "1" *-- "*" EntrypointTag
+ ```
+ 
+-**Node kinds:** `function`, `method`, `class`, `module`, `struct`, `interface`, `trait`, `enum`, `namespace`, `contract`, `library`, `template`, `proxy`
++**Node kinds:** `function`, `method`, `class`, `module`, `struct`, `interface`, `trait`, `enum`, `namespace`, `contract`, `library`, `template`, `proxy`, `state_variable`
+ 
+ **Node origins:** `source`, `proxy`, `binary`, `synthetic`
+ 
+-**Edge kinds:** `calls`, `inherits`, `implements`, `contains`, `imports`, `resolves_to`, `type_uses`, `specializes`, `corresponds_to`
++**Edge kinds:** `calls`, `inherits`, `implements`, `contains`, `imports`, `resolves_to`, `type_uses`, `specializes`, `corresponds_to`, `reads`, `writes`
+ 
+ **Edge confidence:** `certain`, `inferred`, `uncertain`
+ 
+diff --git a/src/trailmark/analysis/inheritance.py b/src/trailmark/analysis/inheritance.py
+new file mode 100644
+index 0000000..a1a62ce
+--- /dev/null
++++ b/src/trailmark/analysis/inheritance.py
+@@ -0,0 +1,205 @@
++"""Resolve inheritance, and attribute state accessed through it.
++
++WHY THIS MODULE EXISTS
++----------------------
++Two linked defects, both of which SILENTLY UNDER-REPORT -- the failure direction that
++reads as safety in an audit.
++
++**1. `inherits` edges dangled.** The Solidity parser builds an inherits target from the
++SOURCE file's module prefix, because when parsing `VaultLib.sol` it has no idea which file
++declares `VaultLibBase2`. So it emitted
++
++    release.core.fund.vault.VaultLib:VaultLib
++        --inherits--> release.core.fund.vault.VaultLib:VaultLibBase2   # no such node
++
++while the real node is ``persistent.vault.VaultLibBase2:VaultLibBase2``. Measured on
++Enzyme: 0 of 283 inherits edges resolved to an existing node. The inheritance graph
++existed on paper and was unusable in practice.
++
++**2. State declared in a base FILE was invisible.** The state web attributes an access
++only when the name matches a state variable declared in the same file
++(``parsers/solidity/parser.py::_add_state_edges``, which said as much: "Inherited-state
++resolution (INFERRED) is future work"). Every other accessed name was DISCARDED. So
++``VaultLib.claimOwnership``, whose body plainly does
++
++    address nextOwner = nominatedOwner;
++    delete nominatedOwner;
++    address prevOwner = owner;
++    owner = nextOwner;
++
++reported ZERO reads and ZERO writes, because `nominatedOwner` lives in
++``VaultLibBase2.sol`` and `owner` in ``VaultLibBaseCore.sol``. This is not an edge case:
++split base storage (``XLib is XLibBase2``, ``bases/``) is the standard convention for
++upgradeable proxy storage, so the blind spot lands hardest on exactly the architecture
++audits care most about. It was also indistinguishable from a genuinely state-free
++function -- 68% of Enzyme's function facts showed no state at all.
++
++Slither's resolved tier would fix this class of gap (it works off the compiled AST, not
++textual scope), but it is an OPTIONAL leg that needs a compilable project, and on the very
++target where this was found slither could not run at all. A compile-free floor cannot
++depend on the compiler to be honest.
++
++Both passes are over-approximate and mark their output ``INFERRED`` with a ``resolution``
++attribute, so a consumer can weigh them and a precise engine can later prune them.
++"""
++
++from __future__ import annotations
++
++from trailmark.models.edges import CodeEdge, EdgeConfidence, EdgeKind
++from trailmark.models.graph import CodeGraph
++from trailmark.models.nodes import (
++    READ_CANDIDATES_ATTR,
++    WRITE_CANDIDATES_ATTR,
++    NodeKind,
++)
++
++#: Kinds that can appear in an `is` clause and can declare state.
++_BASE_KINDS = frozenset({NodeKind.CONTRACT, NodeKind.INTERFACE, NodeKind.LIBRARY})
++
++
++def _bare(symbol: str) -> str:
++    """Callable/type name: module path first (``:``), dots inside it are path separators."""
++    return symbol.split(":")[-1].split(".")[-1]
++
++
++def resolve_inherits_edges(graph: CodeGraph) -> int:
++    """Point dangling ``inherits`` edges at the real base declarations.
++
++    Matches by bare type name, which is unambiguous in Solidity within a project except
++    for genuinely duplicated names (Enzyme really does ship two ``IHelperDataReader``).
++    On ambiguity every candidate is linked: over-approximating the inheritance graph
++    surfaces state and functions that MIGHT be inherited, whereas dropping the edge
++    guarantees they are missed.
++
++    Idempotent. Returns the number of edges added.
++    """
++    by_name: dict[str, list[str]] = {}
++    for node_id, node in graph.nodes.items():
++        if node.kind in _BASE_KINDS:
++            by_name.setdefault(_bare(node_id), []).append(node_id)
++
++    existing = {(e.source_id, e.target_id) for e in graph.edges if e.kind == EdgeKind.INHERITS}
++    new_edges: list[CodeEdge] = []
++    for edge in list(graph.edges):
++        if edge.kind != EdgeKind.INHERITS or edge.target_id in graph.nodes:
++            continue
++        for candidate in sorted(by_name.get(_bare(edge.target_id), ())):
++            if candidate == edge.source_id or (edge.source_id, candidate) in existing:
++                continue
++            existing.add((edge.source_id, candidate))
++            new_edges.append(
++                CodeEdge(
++                    source_id=edge.source_id,
++                    target_id=candidate,
++                    kind=EdgeKind.INHERITS,
++                    confidence=EdgeConfidence.INFERRED,
++                    attributes=(
++                        ("resolution", "inherits-name-match"),
++                        ("raw_target", edge.target_id),
++                    ),
++                )
++            )
++    graph.edges.extend(new_edges)
++    return len(new_edges)
++
++
++def _ancestors(graph: CodeGraph, container_id: str) -> list[str]:
++    """Transitive base containers of ``container_id`` (resolved inherits edges only)."""
++    out: list[str] = []
++    seen = {container_id}
++    stack = [container_id]
++    adjacency: dict[str, list[str]] = {}
++    for edge in graph.edges:
++        if edge.kind == EdgeKind.INHERITS and edge.target_id in graph.nodes:
++            adjacency.setdefault(edge.source_id, []).append(edge.target_id)
++    while stack:
++        cur = stack.pop()
++        for base in adjacency.get(cur, ()):
++            if base not in seen:
++                seen.add(base)
++                out.append(base)
++                stack.append(base)
++    return out
++
++
++def resolve_inherited_state(graph: CodeGraph) -> int:
++    """Add READS/WRITES edges for state a function inherits from a base container.
++
++    Uses the candidate accesses the parser recorded but could not attribute locally, and
++    resolves them against state variables declared on any transitive base. Edges are
++    ``INFERRED`` with ``resolution=inherited-state``, distinguishing them from the
++    ``CERTAIN`` same-contract edges: the name matched a base's declaration, which is
++    strong but not compiler-verified (a local shadow or a same-named var on an unrelated
++    base can fool it).
++
++    Requires ``resolve_inherits_edges`` to have run. Idempotent. Returns edges added.
++    """
++    # state vars declared per container: {container_id: {var_name: state_var_node_id}}
++    declared: dict[str, dict[str, str]] = {}
++    for node_id, node in graph.nodes.items():
++        if node.kind != NodeKind.STATE_VARIABLE:
++            continue
++        container = node_id.rsplit(".", 1)[0]
++        declared.setdefault(container, {})[_bare(node_id)] = node_id
++
++    # which container owns each function (contains edges)
++    owner_of: dict[str, str] = {}
++    for edge in graph.edges:
++        if edge.kind == EdgeKind.CONTAINS:
++            target = graph.nodes.get(edge.target_id)
++            if target is not None and target.kind in (NodeKind.FUNCTION, NodeKind.METHOD):
++                owner_of[edge.target_id] = edge.source_id
++
++    existing = {
++        (e.source_id, e.target_id, e.kind)
++        for e in graph.edges
++        if e.kind in (EdgeKind.READS, EdgeKind.WRITES)
++    }
++    ancestor_cache: dict[str, list[str]] = {}
++    new_edges: list[CodeEdge] = []
++
++    for node_id, node in graph.nodes.items():
++        if node.kind not in (NodeKind.FUNCTION, NodeKind.METHOD):
++            continue
++        attrs = dict(node.attributes)
++        candidates = {
++            EdgeKind.WRITES: attrs.get(WRITE_CANDIDATES_ATTR) or (),
++            EdgeKind.READS: attrs.get(READ_CANDIDATES_ATTR) or (),
++        }
++        if not candidates[EdgeKind.WRITES] and not candidates[EdgeKind.READS]:
++            continue
++        owner = owner_of.get(node_id)
++        if owner is None:
++            continue
++        if owner not in ancestor_cache:
++            ancestor_cache[owner] = _ancestors(graph, owner)
++        bases = ancestor_cache[owner]
++
++        for kind, names in candidates.items():
++            for name in names if isinstance(names, (list, tuple)) else str(names).split(","):
++                name = name.strip()
++                if not name:
++                    continue
++                for base in bases:
++                    target_id = declared.get(base, {}).get(name)
++                    if target_id is None:
++                        continue
++                    key = (node_id, target_id, kind)
++                    if key in existing:
++                        continue
++                    existing.add(key)
++                    new_edges.append(
++                        CodeEdge(
++                            source_id=node_id,
++                            target_id=target_id,
++                            kind=kind,
++                            confidence=EdgeConfidence.INFERRED,
++                            attributes=(
++                                ("resolution", "inherited-state"),
++                                ("declared_in", base),
++                            ),
++                        )
++                    )
++                    break  # nearest base wins; do not fan out over the whole chain
++    graph.edges.extend(new_edges)
++    return len(new_edges)
+diff --git a/src/trailmark/analysis/proxies.py b/src/trailmark/analysis/proxies.py
+index d3ed903..30bf58d 100644
+--- a/src/trailmark/analysis/proxies.py
++++ b/src/trailmark/analysis/proxies.py
+@@ -5,7 +5,7 @@ from __future__ import annotations
+ import dataclasses
+ import re
+ 
+-from trailmark.models.edges import CodeEdge, EdgeKind
++from trailmark.models.edges import CodeEdge, EdgeConfidence, EdgeKind
+ from trailmark.models.graph import CodeGraph
+ from trailmark.models.nodes import CodeUnit, NodeKind, NodeOrigin, SourceLocation, TypeRef
+ 
+@@ -21,9 +21,140 @@ def ensure_proxy_nodes(graph: CodeGraph) -> CodeGraph:
+     """
+     _materialize_unresolved_calls(graph)
+     _materialize_type_use_edges(graph)
++    resolve_proxy_calls(graph)
++    # Cross-file resolution. Imported here rather than at module scope because
++    # `analysis.inheritance` is a sibling pass and a top-level import would make the
++    # import order between the two passes look load-bearing when it is not.
++    from trailmark.analysis.inheritance import resolve_inherited_state, resolve_inherits_edges
++
++    # Order matters: inherited-state resolution walks the inheritance graph, so the
++    # dangling inherits edges must be repaired first.
++    from trailmark.analysis.storage_pointers import resolve_storage_pointer_writes
++
++    resolve_inherits_edges(graph)
++    resolve_inherited_state(graph)
++    # After inheritance: the storage pass resolves an argument against the caller's
++    # VISIBLE state, which includes anything declared on a base.
++    resolve_storage_pointer_writes(graph)
+     return graph
+ 
+ 
++def resolve_proxy_calls(graph: CodeGraph) -> int:
++    """Link proxy nodes to candidate implementations so traversals don't DEAD-END.
++
++    WHY THIS EXISTS
++    ---------------
++    ``_materialize_unresolved_calls`` turns a dangling call target into a proxy NODE,
++    which keeps the call site visible -- but that node is a LEAF. Nothing points from
++    it to the function it actually stands for, so the call graph is *severed* at every
++    interface call and every ``this.f()`` self-call. Measured on a 3-contract fixture:
++
++        Router.routeDrain --calls--> proxy.unresolved:vault.drain      # dead end
++        Vault.drain       --calls--> Vault._sweep
++
++    ``reachable_from("Router.routeDrain")`` returned exactly
++    ``{proxy.unresolved:vault.drain}`` -- the whole Vault subtree invisible -- and
++    ``ancestors_of("_sweep")`` omitted both ``routeDrain`` and ``poke``. For an audit
++    that is the worst possible failure direction: the question "can an untrusted caller
++    reach this sink?" is answered *no* when the true answer is *yes*.
++
++    Aggregating over same-named variants at the QUERY TARGET (what callers were doing
++    to paper over this) cannot fix it: the sink ``_sweep`` is internal and has no
++    interface or proxy variant of its own, so no amount of name-union at the target
++    reconnects it to ``routeDrain``. The cut has to be repaired in the GRAPH, once,
++    where every query benefits.
++
++    RESOLUTION POLICY (deliberately over-approximate)
++    -------------------------------------------------
++    A proxy's raw symbol ``recv.fn`` / ``this.fn`` carries a receiver we cannot resolve
++    without type inference, so we link the proxy to EVERY function/method whose bare
++    name matches ``fn``. That can introduce a call edge to a same-named function on an
++    unrelated contract. This is the safe direction and is chosen on purpose: an extra
++    candidate path costs an analyst one dismissal, while a missing path costs a missed
++    finding. Edges are marked ``confidence=INFERRED`` with ``resolution`` and
++    ``candidates`` attributes so consumers can report the fidelity honestly and so a
++    precise engine (slither) can later PROMOTE or prune them.
++
++    The proxy node is kept ON the path (``routeDrain -> proxy.unresolved:vault.drain
++    -> Vault.drain -> _sweep``) rather than short-circuited, so a rendered path shows
++    exactly where inference happened instead of implying a resolved static call.
++
++    Idempotent: existing proxy->impl edges are never duplicated. Returns the number of
++    edges added.
++    """
++    callable_kinds = {NodeKind.FUNCTION, NodeKind.METHOD}
++    by_bare_name: dict[str, list[str]] = {}
++    for node_id, node in graph.nodes.items():
++        if node.kind not in callable_kinds:
++            continue
++        by_bare_name.setdefault(_bare_name(node_id), []).append(node_id)
++
++    existing = {
++        (edge.source_id, edge.target_id) for edge in graph.edges if edge.kind == EdgeKind.CALLS
++    }
++
++    new_edges: list[CodeEdge] = []
++    for node_id, node in graph.nodes.items():
++        if node.kind != NodeKind.PROXY:
++            continue
++        raw = dict(node.attributes).get("raw_symbol") or node.name
++        target_name = _bare_name(str(raw))
++        candidates = [c for c in by_bare_name.get(target_name, []) if c != node_id]
++        if not candidates:
++            continue
++        for candidate in sorted(candidates):
++            if (node_id, candidate) in existing:
++                continue
++            existing.add((node_id, candidate))
++            new_edges.append(
++                CodeEdge(
++                    source_id=node_id,
++                    target_id=candidate,
++                    kind=EdgeKind.CALLS,
++                    confidence=EdgeConfidence.INFERRED,
++                    attributes=(
++                        ("resolution", "proxy-name-union"),
++                        ("raw_symbol", str(raw)),
++                        ("candidates", len(candidates)),
++                    ),
++                )
++            )
++
++    graph.edges.extend(new_edges)
++    return len(new_edges)
++
++
++def bare_name(symbol: str) -> str:
++    """The callable's own name, from a node id or a raw call symbol.
++
++    THE single definition; ``trailmark.query.core`` re-exports it. It cannot live in
++    ``query.core`` because ``trailmark.query.__init__`` imports ``api``, which imports this
++    module -- so a ``query`` import from here would be circular. It lives at the analysis
++    layer, where the graph repair that depends on it also lives.
++
++    The MODULE part comes first and is separated by ``:``; dots inside it are path
++    separators, not member access. So strip to the last ``:`` FIRST, then take the last
++    dotted segment:
++
++    ``Vault:Vault.drain``                -> ``drain``
++    ``proxy.unresolved:this.selfDrain``  -> ``selfDrain``
++    ``vault.drain``                      -> ``drain``
++    ``persistent.address-list-registry.AddressListRegistry:isInList`` -> ``isInList``
++
++    Splitting on ``.`` alone got that last case wrong -- it yielded
++    ``AddressListRegistry:isInList``, which matches no function, so the proxy stayed
++    unresolved and the call graph stayed severed there. On Enzyme that was 260 proxies
++    (resolvable share 50% -> 68%). Module-qualified symbols are the COMMON case on real
++    imports, so the naive split failed quietly on real code while passing on the toy
++    ``vault.drain`` shape used in tests.
++    """
++    return symbol.split(":")[-1].split(".")[-1]
++
++
++#: Back-compat alias for the previously private name.
++_bare_name = bare_name
++
++
+ def _materialize_unresolved_calls(graph: CodeGraph) -> None:
+     """Rewrite dangling call targets to proxy nodes so traversals retain them."""
+     new_edges: list[CodeEdge] = []
+diff --git a/src/trailmark/analysis/storage_pointers.py b/src/trailmark/analysis/storage_pointers.py
+new file mode 100644
+index 0000000..1725b63
+--- /dev/null
++++ b/src/trailmark/analysis/storage_pointers.py
+@@ -0,0 +1,211 @@
++"""Attribute state writes that happen through a ``storage`` pointer.
++
++WHY THIS MODULE EXISTS
++----------------------
++A Solidity ``storage`` parameter is a POINTER into the caller's state. So::
++
++    // SaturationAndGeometricTWAPState.sol
++    Saturation.SaturationStruct storage satStruct = satDataGivenPair[msg.sender];
++    Saturation.update(satStruct, ...);
++
++    // Saturation.sol  (a library -- it has NO state of its own)
++    function update(SaturationStruct storage satStruct, ...) internal {
++        satStruct.maxLeaf = uint16(maxLeaf);          // writes satDataGivenPair
++    }
++
++The write mutates ``satDataGivenPair`` while naming it nowhere in the callee. A
++name-based state web cannot see it, and neither can ``grep`` -- the variable's name does
++not appear at the write site at all. Measured on Ammalgam before this pass:
++``satDataGivenPair`` and ``TWAPDataGivenPair`` had **zero** recorded writers, despite
++holding the protocol's entire saturation and TWAP state.
++
++That failure mode is worse than a plain miss. A composition/certificate layer that asks
++"does invariant I hold across ALL writers of V" over an empty writer set returns
++*vacuously proven* -- confident, and false, on the most security-critical state in the
++system. Completeness of the writer set is a SOUNDNESS precondition for composed
++reasoning, not a quality metric, and this is the dominant hole in it.
++
++HOW
++---
++The parser records three local facts per function (it cannot do more, because it sees one
++file at a time): which parameters are ``storage``, which of those the body writes, and
++what base identifier each call site passes in each argument position (with local
++``T storage p = <state expr>`` aliases already resolved to the state expression).
++
++This pass closes the loop across files:
++
++1. Seed: a function directly writing its own storage parameter writes that INDEX.
++2. Fixpoint: if ``f`` passes its own storage parameter *j* into ``g``'s position *i* and
++   ``g`` writes *i*, then ``f`` writes *j*. Iterate until stable -- this is what carries
++   the effect up through helper chains.
++3. Attribute: at every call site whose argument resolves to a real state variable, if the
++   callee writes that index, record a WRITES edge from the CALLING function to that state
++   variable.
++
++The write is attributed to the caller, not the library: the caller is the one whose state
++changes, and it is the node an audit reasons about. Edges are ``INFERRED`` with
++``resolution=storage-pointer``, so a consumer can weigh them and a precise engine can
++prune them.
++
++Matching is by bare function name, so an overload or a same-named helper on an unrelated
++contract can over-attribute. That is the intended direction: a surplus writer costs a
++dismissal, a missing writer silently voids a proof.
++"""
++
++from __future__ import annotations
++
++from trailmark.models.edges import CodeEdge, EdgeConfidence, EdgeKind
++from trailmark.models.graph import CodeGraph
++from trailmark.models.nodes import (
++    STORAGE_ARG_CALLS_ATTR,
++    STORAGE_PARAM_WRITES_ATTR,
++    STORAGE_PARAMS_ATTR,
++    NodeKind,
++)
++
++_CALLABLE = (NodeKind.FUNCTION, NodeKind.METHOD)
++
++
++def _bare(symbol: str) -> str:
++    return symbol.split(":")[-1].split(".")[-1]
++
++
++def _parse_arg_calls(raw: str) -> list[tuple[str, int, str]]:
++    """``"update#0:satDataGivenPair;foo#1:x"`` -> [(callee, index, base), ...]."""
++    out: list[tuple[str, int, str]] = []
++    for entry in raw.split(";"):
++        if not entry:
++            continue
++        head, _, base = entry.partition(":")
++        callee, _, index = head.partition("#")
++        if callee and index.isdigit() and base:
++            out.append((callee, int(index), base))
++    return out
++
++
++def resolve_storage_pointer_writes(graph: CodeGraph) -> int:
++    """Add WRITES edges for state mutated through a ``storage`` parameter.
++
++    Idempotent. Returns the number of edges added.
++    """
++    # --- gather per-function facts -------------------------------------------------
++    params_of: dict[str, list[str]] = {}
++    direct_writes: dict[str, set[int]] = {}
++    arg_calls_of: dict[str, list[tuple[str, int, str]]] = {}
++    for node_id, node in graph.nodes.items():
++        if node.kind not in _CALLABLE:
++            continue
++        attrs = dict(node.attributes)
++        raw_params = str(attrs.get(STORAGE_PARAMS_ATTR) or "")
++        params = [p for p in raw_params.split(",") if p]
++        if params:
++            params_of[node_id] = params
++            written = str(attrs.get(STORAGE_PARAM_WRITES_ATTR) or "")
++            idx = {params.index(w) for w in written.split(",") if w in params}
++            if idx:
++                direct_writes[node_id] = idx
++        raw_calls = str(attrs.get(STORAGE_ARG_CALLS_ATTR) or "")
++        if raw_calls:
++            arg_calls_of[node_id] = _parse_arg_calls(raw_calls)
++
++    if not params_of:
++        return 0
++
++    # index functions by bare name: call sites only know the callee's own name
++    by_name: dict[str, list[str]] = {}
++    for node_id in params_of:
++        by_name.setdefault(_bare(node_id), []).append(node_id)
++
++    # --- fixpoint: propagate "writes storage param i" up through helper chains ------
++    writes_index: dict[str, set[int]] = {k: set(v) for k, v in direct_writes.items()}
++    changed = True
++    while changed:
++        changed = False
++        for caller, calls in arg_calls_of.items():
++            caller_params = params_of.get(caller)
++            if not caller_params:
++                continue
++            for callee_name, index, base in calls:
++                if base not in caller_params:
++                    continue  # the argument is not one of the caller's own pointers
++                for callee_id in by_name.get(callee_name, ()):
++                    if index in writes_index.get(callee_id, ()):
++                        j = caller_params.index(base)
++                        if j not in writes_index.setdefault(caller, set()):
++                            writes_index[caller].add(j)
++                            changed = True
++
++    # --- attribute to real state variables at the call sites ------------------------
++    state_by_container: dict[str, dict[str, str]] = {}
++    for node_id, node in graph.nodes.items():
++        if node.kind == NodeKind.STATE_VARIABLE:
++            container = node_id.rsplit(".", 1)[0]
++            state_by_container.setdefault(container, {})[_bare(node_id)] = node_id
++
++    owner_of: dict[str, str] = {}
++    for edge in graph.edges:
++        if edge.kind == EdgeKind.CONTAINS:
++            target = graph.nodes.get(edge.target_id)
++            if target is not None and target.kind in _CALLABLE:
++                owner_of[edge.target_id] = edge.source_id
++
++    # A caller may reach state declared on a base, so consider inherited declarations too.
++    inherits: dict[str, list[str]] = {}
++    for edge in graph.edges:
++        if edge.kind == EdgeKind.INHERITS and edge.target_id in graph.nodes:
++            inherits.setdefault(edge.source_id, []).append(edge.target_id)
++
++    def visible_state(container: str) -> dict[str, str]:
++        seen: dict[str, str] = {}
++        stack = [container]
++        visited = set()
++        while stack:
++            cur = stack.pop()
++            if cur in visited:
++                continue
++            visited.add(cur)
++            for name, sid in state_by_container.get(cur, {}).items():
++                seen.setdefault(name, sid)
++            stack.extend(inherits.get(cur, ()))
++        return seen
++
++    existing = {
++        (e.source_id, e.target_id, e.kind)
++        for e in graph.edges
++        if e.kind in (EdgeKind.READS, EdgeKind.WRITES)
++    }
++    visible_cache: dict[str, dict[str, str]] = {}
++    new_edges: list[CodeEdge] = []
++
++    for caller, calls in arg_calls_of.items():
++        owner = owner_of.get(caller)
++        if owner is None:
++            continue
++        if owner not in visible_cache:
++            visible_cache[owner] = visible_state(owner)
++        visible = visible_cache[owner]
++        for callee_name, index, base in calls:
++            target_id = visible.get(base)
++            if target_id is None:
++                continue  # argument is not a state variable of the caller
++            if not any(index in writes_index.get(cid, ()) for cid in by_name.get(callee_name, ())):
++                continue
++            key = (caller, target_id, EdgeKind.WRITES)
++            if key in existing:
++                continue
++            existing.add(key)
++            new_edges.append(
++                CodeEdge(
++                    source_id=caller,
++                    target_id=target_id,
++                    kind=EdgeKind.WRITES,
++                    confidence=EdgeConfidence.INFERRED,
++                    attributes=(
++                        ("resolution", "storage-pointer"),
++                        ("via", f"{callee_name}#{index}"),
++                    ),
++                )
++            )
++
++    graph.edges.extend(new_edges)
++    return len(new_edges)
+diff --git a/src/trailmark/models/edges.py b/src/trailmark/models/edges.py
+index c3ccd96..c2484c8 100644
+--- a/src/trailmark/models/edges.py
++++ b/src/trailmark/models/edges.py
+@@ -20,6 +20,8 @@ class EdgeKind(Enum):
+     TYPE_USES = "type_uses"
+     SPECIALIZES = "specializes"
+     CORRESPONDS_TO = "corresponds_to"
++    READS = "reads"
++    WRITES = "writes"
+ 
+ 
+ class EdgeConfidence(Enum):
+diff --git a/src/trailmark/models/nodes.py b/src/trailmark/models/nodes.py
+index 979395f..c02b00b 100644
+--- a/src/trailmark/models/nodes.py
++++ b/src/trailmark/models/nodes.py
+@@ -8,6 +8,24 @@ from enum import Enum
+ type AttributeValue = str | int | float | bool | None
+ type Attribute = tuple[str, AttributeValue]
+ 
++#: Attribute keys for state accesses a per-file parse could NOT attribute locally, stored as
++#: comma-separated names so the post-merge inheritance pass
++#: (``analysis.inheritance.resolve_inherited_state``) can resolve them against base
++#: declarations. Defined here at the schema layer so the producer (the Solidity parser) and
++#: the consumer (the analysis pass) share ONE definition -- two copies of a key string is
++#: the same trap that let a wrong ``bare_name`` survive in two places.
++WRITE_CANDIDATES_ATTR = "state_write_candidates"
++READ_CANDIDATES_ATTR = "state_read_candidates"
++
++#: Storage-pointer facts, for the interprocedural pass in
++#: ``analysis.storage_pointers``. A ``storage`` parameter is a pointer into the CALLER's
++#: state, so ``lib.update(satStruct, ...)`` mutates the caller's mapping while naming no
++#: state variable anywhere in the callee -- invisible to a name-based state web and to
++#: grep alike. Matching is by argument INDEX, hence the ordered parameter list.
++STORAGE_PARAMS_ATTR = "storage_params"  # ordered names of `storage` parameters
++STORAGE_PARAM_WRITES_ATTR = "storage_param_writes"  # which of them this body writes
++STORAGE_ARG_CALLS_ATTR = "storage_arg_calls"  # "callee#index:callerBase;..." per call site
++
+ 
+ class NodeKind(Enum):
+     """The kind of code unit represented by a node."""
+@@ -29,6 +47,7 @@ class NodeKind(Enum):
+     VIEW = "view"
+     PROCEDURE = "procedure"
+     PROXY = "proxy"
++    STATE_VARIABLE = "state_variable"
+ 
+ 
+ class NodeOrigin(Enum):
+diff --git a/src/trailmark/parsers/solidity/parser.py b/src/trailmark/parsers/solidity/parser.py
+index dc652b2..9c1b992 100644
+--- a/src/trailmark/parsers/solidity/parser.py
++++ b/src/trailmark/parsers/solidity/parser.py
+@@ -10,6 +10,11 @@ from tree_sitter_language_pack import get_language
+ from trailmark.models.edges import CodeEdge, EdgeConfidence, EdgeKind
+ from trailmark.models.graph import CodeGraph
+ from trailmark.models.nodes import (
++    READ_CANDIDATES_ATTR,
++    STORAGE_ARG_CALLS_ATTR,
++    STORAGE_PARAM_WRITES_ATTR,
++    STORAGE_PARAMS_ATTR,
++    WRITE_CANDIDATES_ATTR,
+     BranchInfo,
+     CodeUnit,
+     NodeKind,
+@@ -54,6 +59,46 @@ _FUNCTION_TYPES = frozenset(
+     }
+ )
+ 
++# Solidity RESERVED globals and builtin free functions: identifiers that can never be a
++# state variable, so they only add noise to the state-access CANDIDATE lists.
++#
++# Deliberately NARROW. The obvious wider list -- adding member names like `name`, `balance`,
++# `value`, `data`, `length` because they appear via `msg.value` / `abi.encode` -- would be a
++# BUG: those are among the most common state-variable names in Solidity (ERC20's `name`,
++# every `balance`), and filtering them would silently drop real inherited state and
++# re-create the under-report this whole pass exists to fix. A surplus candidate merely
++# fails to resolve, which costs nothing; a missing one costs a finding. So only reserved
++# words go here.
++_SOLIDITY_BUILTINS = frozenset(
++    {
++        # global namespaces / reserved identifiers
++        "abi",
++        "block",
++        "msg",
++        "tx",
++        "this",
++        "super",
++        "now",
++        "type",
++        # builtin free functions
++        "gasleft",
++        "keccak256",
++        "sha256",
++        "sha3",
++        "ripemd160",
++        "ecrecover",
++        "addmod",
++        "mulmod",
++        "require",
++        "assert",
++        "revert",
++        "selfdestruct",
++        "suicide",
++        "blockhash",
++        "unchecked",
++    }
++)
++
+ 
+ class SolidityParser:
+     """Parses Solidity source files into CodeGraph using tree-sitter."""
+@@ -187,6 +232,13 @@ def _visit_contract_body(
+     body = node.child_by_field_name("body")
+     if body is None:
+         return
++    # First pass: extract state variables so functions can match their
++    # reads/writes against them (the state web).
++    state_vars: set[str] = set()
++    for child in body.children:
++        if child.type == "state_variable_declaration":
++            _extract_state_variable(child, file_path, module_id, contract_id, graph, state_vars)
++    frozen_state_vars = frozenset(state_vars)
+     for child in body.children:
+         if child.type in _FUNCTION_TYPES:
+             _extract_function(
+@@ -196,6 +248,7 @@ def _visit_contract_body(
+                 contract_id,
+                 graph,
+                 container_kind=graph.nodes[contract_id].kind,
++                state_vars=frozen_state_vars,
+             )
+         elif child.type == "struct_declaration":
+             _extract_struct(child, file_path, module_id, graph)
+@@ -203,6 +256,37 @@ def _visit_contract_body(
+             _extract_enum(child, file_path, module_id, graph)
+ 
+ 
++def _extract_state_variable(
++    node: Node,
++    file_path: str,
++    module_id: str,
++    contract_id: str,
++    graph: CodeGraph,
++    state_vars: set[str],
++) -> None:
++    """Extract a state variable declaration as a STATE_VARIABLE node."""
++    name_node = node.child_by_field_name("name")
++    if name_node is None:
++        return
++    var_name = node_text(name_node)
++    var_id = f"{contract_id}.{var_name}"
++    attributes: list[tuple[str, str]] = []
++    for child in node.children:
++        if child.type == "visibility":
++            attributes.append(("solidity_visibility", node_text(child)))
++            break
++    unit = CodeUnit(
++        id=var_id,
++        name=var_name,
++        kind=NodeKind.STATE_VARIABLE,
++        location=make_location(node, file_path),
++        attributes=tuple(attributes),
++    )
++    graph.nodes[var_id] = unit
++    add_contains_edge(graph, contract_id, var_id)
++    state_vars.add(var_name)
++
++
+ def _extract_struct(
+     node: Node,
+     file_path: str,
+@@ -255,6 +339,7 @@ def _extract_function(
+     graph: CodeGraph,
+     *,
+     container_kind: NodeKind | None = None,
++    state_vars: frozenset[str] = frozenset(),
+ ) -> None:
+     """Extract a function, constructor, or modifier definition."""
+     func_name = _get_function_name(node)
+@@ -278,6 +363,54 @@ def _extract_function(
+     complexity = compute_complexity(branches)
+     docstring = _extract_docstring(node)
+ 
++    # State accesses are computed BEFORE the unit exists, because the names this file
++    # cannot attribute have to be recorded ON the unit for the post-merge inheritance pass
++    # (analysis/inheritance.resolve_inherited_state) to resolve them. Note the condition is
++    # `contract_id is not None` alone -- NOT `and state_vars`. A contract whose storage is
++    # entirely inherited declares no state variables of its own, so gating on state_vars
++    # skipped exactly the split-base-storage case the inheritance pass exists to fix.
++    attributes = list(_function_attributes(node, container_kind))
++    write_candidates: list[str] = []
++    read_candidates: list[str] = []
++    writes: dict = {}
++    reads: dict = {}
++    # Storage-pointer facts are collected for EVERY function, including library functions
++    # in a container with no state of its own -- that is precisely the case where a write
++    # is attributable to no state name in the callee (analysis/storage_pointers.py).
++    storage_params = _storage_parameters(node)
++    arg_calls: list[tuple[str, int, str]] = []
++    if contract_id is not None or storage_params:
++        writes, reads, arg_calls, written_locals = _collect_state_accesses(
++            body, {p.name for p in params}, frozenset(storage_params)
++        )
++        written_storage_params = [p for p in storage_params if p in written_locals]
++        if storage_params:
++            attributes.append((STORAGE_PARAMS_ATTR, ",".join(storage_params)))
++        if written_storage_params:
++            attributes.append((STORAGE_PARAM_WRITES_ATTR, ",".join(written_storage_params)))
++        if arg_calls:
++            attributes.append(
++                (
++                    STORAGE_ARG_CALLS_ATTR,
++                    ";".join(f"{c}#{i}:{b}" for c, i, b in arg_calls),
++                )
++            )
++    if contract_id is not None:
++        # Builtins are excluded from the CANDIDATE lists (not from the local matching
++        # above, which is already constrained to declared state vars). They can never
++        # resolve to an inherited state variable, and recording `abi.encodePacked` as a
++        # "state read candidate" puts a claim in the graph that is simply untrue.
++        write_candidates = sorted(
++            n for n in writes if n not in state_vars and n not in _SOLIDITY_BUILTINS
++        )
++        read_candidates = sorted(
++            n for n in reads if n not in state_vars and n not in _SOLIDITY_BUILTINS
++        )
++        if write_candidates:
++            attributes.append((WRITE_CANDIDATES_ATTR, ",".join(write_candidates)))
++        if read_candidates:
++            attributes.append((READ_CANDIDATES_ATTR, ",".join(read_candidates)))
++
+     unit = CodeUnit(
+         id=func_id,
+         name=func_name,
+@@ -289,13 +422,18 @@ def _extract_function(
+         cyclomatic_complexity=complexity,
+         branches=tuple(branches),
+         docstring=docstring,
+-        attributes=_function_attributes(node, container_kind),
++        attributes=tuple(attributes),
+     )
+     graph.nodes[func_id] = unit
+     add_contains_edge(graph, owner, func_id)
+ 
+     _add_call_edges(calls, func_id, module_id, contract_id, file_path, graph)
+ 
++    # State web: READS/WRITES edges to state declared in THIS file (CERTAIN). Anything else
++    # is left to the inheritance pass, which marks its edges INFERRED.
++    if contract_id is not None and state_vars:
++        _add_state_edges(writes, reads, state_vars, func_id, contract_id, file_path, graph)
++
+ 
+ def _get_function_name(node: Node) -> str:
+     """Extract the function name from a definition node."""
+@@ -360,6 +498,55 @@ def _extract_parameters(node: Node) -> list[Parameter]:
+     return params
+ 
+ 
++def _callee_name(call: Node) -> str | None:
++    """The called function's own name: ``f(x)`` -> ``f``, ``Lib.update(x)`` -> ``update``.
++
++    The LAST identifier of the callee expression, not the first -- ``_base_identifier``
++    would return the library/receiver (``Lib``), which is not what a call site is matched
++    on.
++    """
++    callee = None
++    for child in call.children:
++        if child.type == "call_argument":
++            break
++        if child.is_named:
++            callee = child
++    if callee is None:
++        return None
++    last: str | None = None
++
++    def descend(n: Node) -> None:
++        nonlocal last
++        if n.type == "identifier":
++            last = node_text(n)
++        for c in n.children:
++            if c.is_named:
++                descend(c)
++
++    descend(callee)
++    return last
++
++
++def _storage_parameters(node: Node) -> list[str]:
++    """Names of parameters declared ``storage``, in declaration order.
++
++    A ``storage`` parameter is a POINTER into the caller's state, so writing
++    ``param.field`` inside the callee mutates the caller's storage. Libraries use this
++    constantly (``Saturation.update(satStruct, ...)``), and it is the one shape where a
++    state write is attributable to no state variable name anywhere in the callee -- the
++    callee may have no state of its own at all. Position matters, because the caller is
++    matched by argument INDEX.
++    """
++    names: list[str] = []
++    for child in node.children:
++        if child.type != "parameter":
++            continue
++        name_node = child.child_by_field_name("name")
++        if name_node is not None and any(c.type == "storage" for c in child.children):
++            names.append(node_text(name_node))
++    return names
++
++
+ def _extract_single_param(
+     param: Node,
+     params: list[Parameter],
+@@ -447,6 +634,270 @@ def _resolve_call_target(
+     return call_name
+ 
+ 
++def _base_identifier(node: Node | None) -> str | None:
++    """Descend an assignment LHS to its root identifier name.
++
++    Handles ``x``, ``bal[k]`` (array_access), and ``owner.field``
++    (member_expression). Syntactic only -- no type resolution.
++    """
++    if node is None:
++        return None
++    if node.type == "identifier":
++        return node_text(node)
++    for child in node.children:
++        if child.is_named:
++            found = _base_identifier(child)
++            if found:
++                return found
++    return None
++
++
++def _lhs_identifiers(node: Node | None) -> list[str]:
++    """EVERY root identifier written by an assignment LHS.
++
++    ``_base_identifier`` returns the FIRST identifier it finds, which silently drops
++    every target after the first in a tuple destructuring. Found on Ammalgam:
++
++        (referenceReserveX, referenceReserveY) = _castReserves(...);   // AmmalgamPair.sol:100
++
++    recorded a write to ``referenceReserveX`` and NOT to ``referenceReserveY`` -- so a
++    state variable that is plainly assigned had one fewer writer than it really has.
++    Multi-writer state is precisely what the writers-graph and the fold/certificate layer
++    key on, so a missing writer understates cross-operation asymmetry exactly where it
++    matters. Tuple-returning internal helpers are idiomatic Solidity, so this is common,
++    not exotic.
++    """
++    if node is None:
++        return []
++    tuple_node = _unwrap_tuple(node)
++    if tuple_node is not None:
++        names: list[str] = []
++        for child in tuple_node.children:
++            if not child.is_named:
++                continue
++            name = _base_identifier(child)
++            if name and name not in names:
++                names.append(name)
++        return names
++    single = _base_identifier(node)
++    return [single] if single else []
++
++
++def _unwrap_tuple(node: Node) -> Node | None:
++    """Find the tuple LHS behind wrapper nodes, else None.
++
++    The grammar wraps an assignment LHS in an ``expression`` node, so ``(a, b) = f()``
++    presents as ``expression -> tuple_expression`` and a type check on the LHS itself
++    matches nothing. Only single-named-child wrappers are unwrapped: an ``array_access``
++    like ``bal[k]`` has two named children and must fall through to ``_base_identifier``
++    so it stays a single write to ``bal``.
++    """
++    cur = node
++    for _ in range(4):
++        if cur.type == "tuple_expression":
++            return cur
++        named = [c for c in cur.children if c.is_named]
++        if len(named) != 1:
++            return None
++        cur = named[0]
++    return None
++
++
++def _collect_state_accesses(
++    body: Node | None,
++    param_names: set[str],
++    storage_param_names: frozenset[str] = frozenset(),
++) -> tuple[dict[str, Node], dict[str, Node]]:
++    """Collect candidate state writes and reads from a function body.
++
++    Returns ``(writes, reads)`` mapping identifier name -> representative LHS/use
++    node. Filtering to actual state variables (and excluding locals) happens in
++    :func:`_add_state_edges`. Syntactic only: no type resolution.
++    """
++    writes: dict[str, Node] = {}
++    reads: dict[str, Node] = {}
++    locals_: set[str] = set(param_names)
++    # local storage-pointer aliases: alias name -> base state expression's root identifier.
++    # `S storage p = satDataGivenPair[k];` then `p.f = v` WRITES satDataGivenPair while
++    # naming neither it nor any state variable -- invisible to a name-based state web, and
++    # invisible to grep. Resolving the alias is what makes such a write attributable.
++    aliases: dict[str, str] = {}
++    # (callee bare name, argument index, caller-side base identifier) per call site.
++    arg_calls: list[tuple[str, int, str]] = []
++
++    def walk(node: Node) -> None:
++        t = node.type
++        if t == "assignment_expression":
++            left = node.child_by_field_name("left")
++            target = left if left is not None else node
++            # EVERY target: a tuple destructuring assigns them all.
++            for base in _lhs_identifiers(left):
++                writes[base] = target
++            right = node.child_by_field_name("right")
++            if right is not None:
++                walk(right)
++            return
++        if t == "augmented_assignment_expression":
++            left = node.child_by_field_name("left")
++            target = left if left is not None else node
++            for base in _lhs_identifiers(left):
++                writes[base] = target
++                reads[base] = target  # read-modify-write
++            right = node.child_by_field_name("right")
++            if right is not None:
++                walk(right)
++            return
++        if t == "variable_declaration_statement":
++            value = node.child_by_field_name("value")
++            for child in node.children:
++                if child.type != "variable_declaration":
++                    continue
++                name_node = child.child_by_field_name("name")
++                if name_node is None:
++                    continue
++                alias = node_text(name_node)
++                locals_.add(alias)
++                # `T storage p = <state expr>` -- p is a POINTER into the state expression,
++                # so a later `p.f = v` mutates that state. Only `storage` counts: a
++                # `memory` copy is genuinely a local and mutating it changes nothing.
++                if any(c.type == "storage" for c in child.children):
++                    base = _base_identifier(value)
++                    if base:
++                        aliases[alias] = base
++            if value is not None:
++                walk(value)
++            return
++        if t == "member_expression":
++            # Walk the OBJECT only. The property is a field/member name, not an identifier
++            # in this contract's scope, and recording it produced false state reads
++            # whenever a struct field happened to share a state variable's name. Measured
++            # on Ammalgam: `inputParams.activeLiquidityAssets` (a field on a LOCAL struct)
++            # was recorded as a read of `TokenController.activeLiquidityAssets`, giving
++            # that variable six readers it does not have. Not harmless over-approximation
++            # -- co-writer/reader counts feed the writers-graph and the frontier's exposure
++            # score, so fabricated edges distort what the loop prioritises.
++            obj = node.child_by_field_name("object")
++            if obj is not None:
++                walk(obj)
++            else:
++                for child in node.children:
++                    if child.is_named:
++                        walk(child)
++                        break
++            return
++        if t == "call_struct_argument":
++            # `f({field: value})` / `S({field: value})`. The FIELD is a struct member or a
++            # named parameter, not an identifier in this contract's scope. Same false-read
++            # class as member_expression above: on Ammalgam
++            # `reserveXAssets: _reserveXAssets` inside a struct literal was recorded as a
++            # read of the state variable `TokenController.reserveXAssets`, which
++            # `computeAssetsState` never touches. Walk the VALUE only.
++            value = node.child_by_field_name("value")
++            if value is not None:
++                walk(value)
++            else:
++                for child in node.children:
++                    if child.is_named and child.type != "identifier":
++                        walk(child)
++            return
++        if t == "call_expression":
++            # Record which base identifier is passed in each ARGUMENT POSITION. If the
++            # callee writes a storage parameter at that position, the caller's state is
++            # what actually gets mutated -- see analysis.storage_pointers. Aliases are
++            # resolved here so the caller-side base is already a state name.
++            callee = _callee_name(node)
++            if callee:
++                index = 0
++                for child in node.children:
++                    if child.type != "call_argument":
++                        continue
++                    base = _base_identifier(child)
++                    # Only bases that could actually carry a storage pointer. A plain
++                    # local (a `memory` copy, a value parameter) cannot alias state, so
++                    # recording it would just bloat every call site's metadata --
++                    # `abi.encodePacked(name, ...)` is not a storage handoff.
++                    if base and (
++                        base in aliases or base in storage_param_names or base not in locals_
++                    ):
++                        arg_calls.append((callee, index, aliases.get(base, base)))
++                    index += 1
++            for child in node.children:
++                walk(child)
++            return
++        if t == "identifier":
++            reads.setdefault(node_text(node), node)
++            return
++        for child in node.children:
++            walk(child)
++
++    if body is not None:
++        walk(body)
++
++    # Resolve storage-pointer aliases to the state they point at, BEFORE locals are
++    # stripped -- the alias is itself a local, so stripping first would discard the write
++    # entirely. Creating the pointer also reads the slot, hence the read as well.
++    for alias, base in aliases.items():
++        if alias in writes:
++            writes.setdefault(base, writes[alias])
++        if alias in reads:
++            reads.setdefault(base, reads[alias])
++        reads.setdefault(base, reads.get(alias) or writes.get(alias))
++
++    # Captured BEFORE stripping: a `storage` PARAMETER is a local by scope but a pointer
++    # into the caller's state, so `st.field = v` is a real write that the caller must be
++    # told about. Stripping locals first discarded exactly that fact.
++    written_locals = {name for name in writes if name in locals_}
++
++    # Locals (params + in-body declarations) are not state accesses.
++    for loc in locals_:
++        reads.pop(loc, None)
++        writes.pop(loc, None)
++    return (
++        writes,
++        {k: v for k, v in reads.items() if v is not None},
++        arg_calls,
++        written_locals,
++    )
++
++
++def _add_state_edges(
++    writes: dict[str, Node],
++    reads: dict[str, Node],
++    state_vars: frozenset[str],
++    source_id: str,
++    contract_id: str,
++    file_path: str,
++    graph: CodeGraph,
++) -> None:
++    """Add READS/WRITES edges to state variables declared on the contract.
++
++    Confidence is CERTAIN: the accessed name matches a state variable declared
++    in this contract. Inherited-state resolution (INFERRED) is future work.
++    """
++    for name, node in writes.items():
++        if name in state_vars:
++            graph.edges.append(
++                CodeEdge(
++                    source_id=source_id,
++                    target_id=f"{contract_id}.{name}",
++                    kind=EdgeKind.WRITES,
++                    confidence=EdgeConfidence.CERTAIN,
++                    location=make_location(node, file_path),
++                )
++            )
++    for name, node in reads.items():
++        if name in state_vars:
++            graph.edges.append(
++                CodeEdge(
++                    source_id=source_id,
++                    target_id=f"{contract_id}.{name}",
++                    kind=EdgeKind.READS,
++                    confidence=EdgeConfidence.CERTAIN,
++                    location=make_location(node, file_path),
++                )
++            )
++
++
+ def _extract_import(node: Node, graph: CodeGraph) -> None:
+     """Extract import directives as dependency info."""
+     for child in node.children:
+diff --git a/src/trailmark/query/api.py b/src/trailmark/query/api.py
+index e228762..753a537 100644
+--- a/src/trailmark/query/api.py
++++ b/src/trailmark/query/api.py
+@@ -17,6 +17,7 @@ from trailmark.models.annotations import Annotation, AnnotationKind
+ from trailmark.models.edges import CodeEdge, EdgeKind
+ from trailmark.models.graph import CodeGraph
+ from trailmark.models.nodes import CodeUnit, NodeOrigin, TypeParameter, TypeRef
++from trailmark.query import core
+ from trailmark.storage.graph_store import GraphStore
+ 
+ 
+@@ -29,11 +30,57 @@ def detect_languages(path: str) -> list[str]:
+ 
+ 
+ class QueryEngine:
+-    """Facade for building and querying code graphs."""
++    """Facade for building and querying code graphs.
++
++    Name-based traversal methods delegate to :mod:`trailmark.query.core`, so every
++    surface (the ``tmq`` CLI, the MCP server, batch extraction) shares ONE
++    name-resolution policy and one definition of "reachable". See that module for why
++    that mattered: the three surfaces had drifted into three different answers, one of
++    which reported a reachable sink as unreachable.
++    """
+ 
+     def __init__(self, store: GraphStore) -> None:
+         self._store = store
+ 
++    @property
++    def store(self) -> GraphStore:
++        """The underlying store, for callers needing traversal by node ID.
++
++        Public so out-of-package consumers (the MCP server) stop reaching through
++        ``engine._store``. Prefer the ID-taking methods on this class where they exist.
++        """
++        return self._store
++
++    def resolve_name(self, name: str) -> core.Resolution:
++        """Resolve ``name`` to every node it denotes.
++
++        The result carries the variant set and ``ambiguous``/``variant_count``, so a
++        caller reporting on a name can state honestly how many nodes it matched instead
++        of silently answering for one of them.
++        """
++        return core.resolve(self._store, name)
++
++    def entrypoint_ids(self) -> list[str]:
++        """Node IDs of all detected entrypoints."""
++        return sorted(self._store.graph.entrypoints)
++
++    def paths_between_ids(
++        self,
++        src_id: str,
++        dst_id: str,
++        max_depth: int = 20,
++    ) -> list[list[str]]:
++        """All call paths between two explicit node IDs (no name resolution)."""
++        return self._store.paths_between(src_id, dst_id, max_depth)
++
++    def entrypoint_paths_to_id(
++        self,
++        node_id: str,
++        max_depth: int = 20,
++    ) -> list[list[str]]:
++        """Entrypoint paths to an explicit node ID (no name resolution)."""
++        return self._store.entrypoint_paths_to(node_id, max_depth=max_depth)
++
+     @classmethod
+     def from_directory(
+         cls,
+@@ -73,21 +120,37 @@ class QueryEngine:
+         See ``trailmark.analysis.diff.compute_diff`` for the returned
+         schema.
+         """
+-        return compute_diff(other._store._graph, self._store._graph)  # noqa: SLF001
++        return compute_diff(other._store.graph, self._store.graph)
++
++    def _units(self, node_ids: list[str]) -> list[dict[str, Any]]:
++        """Map node IDs to serialized units, skipping any that vanished."""
++        graph = self._store.graph
++        return [_unit_to_dict(graph.nodes[nid]) for nid in node_ids if nid in graph.nodes]
+ 
+     def callers_of(self, name: str) -> list[dict[str, Any]]:
+-        """Find all callers of a function/method by name."""
+-        node_id = self._store.find_node_id(name)
+-        if node_id is None:
+-            return []
+-        return [_unit_to_dict(u) for u in self._store.callers_of(node_id)]
++        """Find all callers of a function/method by name.
++
++        Aggregates over every variant the name denotes (implementation, interface
++        declaration, unresolved proxy), so a call arriving at only one variant is still
++        reported.
++        """
++        ids, _ = core.neighbors(self._store, name, direction="in")
++        return self._units(ids)
+ 
+     def callees_of(self, name: str) -> list[dict[str, Any]]:
+-        """Find all functions/methods called by the named unit."""
+-        node_id = self._store.find_node_id(name)
+-        if node_id is None:
+-            return []
+-        return [_unit_to_dict(u) for u in self._store.callees_of(node_id)]
++        """Find all functions/methods called by the named unit (all variants)."""
++        ids, _ = core.neighbors(self._store, name, direction="out")
++        return self._units(ids)
++
++    def reads_of(self, name: str) -> list[dict[str, Any]]:
++        """State variables the named function reads (Solidity state web)."""
++        ids, _ = core.state_access(self._store, name, mode="reads")
++        return self._units(ids)
++
++    def writes_of(self, name: str) -> list[dict[str, Any]]:
++        """State variables the named function writes (Solidity state web)."""
++        ids, _ = core.state_access(self._store, name, mode="writes")
++        return self._units(ids)
+ 
+     def ancestors_of(self, name: str) -> list[dict[str, Any]]:
+         """Find every function/method that can transitively reach ``name``.
+@@ -96,44 +159,25 @@ class QueryEngine:
+         sink, this surfaces every function that could eventually call it,
+         directly or indirectly. Useful for upward slicing during audits.
+         """
+-        node_id = self._store.find_node_id(name)
+-        if node_id is None:
+-            return []
+-        ancestor_ids = self._store.ancestors_of(node_id)
+-        result: list[dict[str, Any]] = []
+-        for aid in ancestor_ids:
+-            unit = self._store._graph.nodes.get(aid)  # noqa: SLF001
+-            if unit is not None:
+-                result.append(_unit_to_dict(unit))
+-        return result
++        ids, _ = core.closure(self._store, name, direction="in")
++        return self._units(ids)
+ 
+     def reachable_from(self, name: str) -> list[dict[str, Any]]:
+         """Find every function/method transitively reachable from ``name``.
+ 
+         The transitive closure of ``callees_of``.
+         """
+-        node_id = self._store.find_node_id(name)
+-        if node_id is None:
+-            return []
+-        reachable_ids = self._store.reachable_from(node_id)
+-        result: list[dict[str, Any]] = []
+-        for rid in reachable_ids:
+-            unit = self._store._graph.nodes.get(rid)  # noqa: SLF001
+-            if unit is not None:
+-                result.append(_unit_to_dict(unit))
+-        return result
++        ids, _ = core.closure(self._store, name, direction="out")
++        return self._units(ids)
+ 
+     def paths_between(
+         self,
+         src: str,
+         dst: str,
+     ) -> list[list[str]]:
+-        """Find all call paths between two nodes."""
+-        src_id = self._store.find_node_id(src)
+-        dst_id = self._store.find_node_id(dst)
+-        if src_id is None or dst_id is None:
+-            return []
+-        return self._store.paths_between(src_id, dst_id)
++        """Find all call paths between two nodes, over all variants of each name."""
++        paths, _, _ = core.paths_between(self._store, src, dst)
++        return paths
+ 
+     def connect_subgraphs(
+         self,
+@@ -159,14 +203,58 @@ class QueryEngine:
+     ) -> list[list[str]]:
+         """Find call paths from any entrypoint to ``name``.
+ 
+-        Answers the canonical attack-surface question: "given this sink,
+-        what concrete entrypoint paths can reach it?" Returns a list of
+-        id-path lists, one per reachable entrypoint.
++        Answers the canonical attack-surface question: "given this sink, what concrete
++        entrypoint paths can reach it?" Returns a list of id-path lists.
++
++        Aggregates over every variant of ``name``. An empty result is NOT proof of
++        unreachability: an unknown name returns empty, and so does a sink whose only
++        paths exceed ``max_depth``. Use :meth:`entrypoint_paths_report` for a verdict
++        that cannot produce that false negative.
+         """
+-        node_id = self._store.find_node_id(name)
+-        if node_id is None:
+-            return []
+-        return self._store.entrypoint_paths_to(node_id, max_depth=max_depth)
++        paths, _, _ = core.entrypoint_paths(self._store, name, max_depth=max_depth)
++        return paths
++
++    def entrypoint_paths_report(
++        self,
++        name: str,
++        max_depth: int = 20,
++        limit: int | None = 50,
++    ) -> dict[str, Any]:
++        """Reachability verdict for ``name``, plus bounded path evidence.
++
++        This is the method audit surfaces should call, because it separates the three
++        facts that a bare path list conflates:
++
++        * ``resolved`` -- did the name match any node? An unmatched name (typo, wrong
++          casing, renamed function) otherwise looks identical to a safe result.
++        * ``reachable`` / ``reaching_entrypoints`` -- the verdict, from ancestor closure,
++          with NO depth limit. Never derived from the path list.
++        * ``paths`` / ``paths_truncated`` -- illustrative evidence, capped.
++
++        The combination ``reachable=True`` with ``paths=[]`` is meaningful and expected:
++        the sink IS reachable, but every route is longer than ``max_depth``. Reported
++        as ``paths_beyond_max_depth`` so it reads as a display limit rather than safety.
++        """
++        reaching, res = core.reaching_entrypoints(self._store, name)
++        paths, _, truncated = core.entrypoint_paths(
++            self._store,
++            name,
++            max_depth=max_depth,
++            limit=limit,
++        )
++        return {
++            "query": name,
++            "resolved": bool(res),
++            "variants": list(res.ids),
++            "variant_kinds": res.kinds,
++            "ambiguous": res.ambiguous,
++            "reachable": bool(reaching),
++            "reaching_entrypoints": reaching,
++            "paths": paths,
++            "paths_truncated": truncated,
++            "paths_beyond_max_depth": bool(reaching) and not paths,
++            "max_depth": max_depth,
++        }
+ 
+     def nodes_with_annotation(
+         self,
+@@ -187,7 +275,7 @@ class QueryEngine:
+         (``TypeRef.name``) — modules/generics are ignored.
+         """
+         result: list[dict[str, Any]] = []
+-        for unit in self._store._graph.nodes.values():  # noqa: SLF001
++        for unit in self._store.graph.nodes.values():
+             for exc in unit.exception_types:
+                 if exc.name == exception_name:
+                     result.append(_unit_to_dict(unit))
+@@ -271,7 +359,7 @@ class QueryEngine:
+     def summary(self) -> dict[str, Any]:
+         """Return a summary of the code graph."""
+         store = self._store
+-        graph = store._graph  # noqa: SLF001
++        graph = store.graph
+         funcs = [n for n in graph.nodes.values() if n.kind.value in ("function", "method")]
+         call_edges = [e for e in graph.edges if e.kind.value == "calls"]
+         return {
+@@ -326,7 +414,7 @@ class QueryEngine:
+         finding_kinds = {AnnotationKind.FINDING, AnnotationKind.AUDIT_NOTE}
+         if kind is not None:
+             finding_kinds = {kind}
+-        graph = self._store._graph  # noqa: SLF001
++        graph = self._store.graph
+         results: list[dict[str, Any]] = []
+         for node_id, anns in graph.annotations.items():
+             matching = [a for a in anns if a.kind in finding_kinds]
+@@ -340,10 +428,19 @@ class QueryEngine:
+             results.append(entry)
+         return results
+ 
++    def subgraph_ids(self, name: str) -> list[str]:
++        """Return the node IDs in a named subgraph, sorted.
++
++        The ID-level counterpart to :meth:`subgraph`, for callers that only need
++        membership (e.g. "is this entrypoint untrusted?") and shouldn't pay to serialize
++        every unit -- nor reach into the store to avoid paying.
++        """
++        return sorted(self._store.subgraph(name))
++
+     def subgraph(self, name: str) -> list[dict[str, Any]]:
+         """Return nodes in a named subgraph."""
+         node_ids = self._store.subgraph(name)
+-        graph = self._store._graph  # noqa: SLF001
++        graph = self._store.graph
+         return [_unit_to_dict(graph.nodes[nid]) for nid in sorted(node_ids) if nid in graph.nodes]
+ 
+     def subgraph_edges(
+@@ -365,7 +462,7 @@ class QueryEngine:
+         node_id = self._store.find_node_id(name)
+         if node_id is None:
+             return []
+-        graph = self._store._graph  # noqa: SLF001
++        graph = self._store.graph
+         unit = graph.nodes.get(node_id)
+         if unit is None:
+             return []
+@@ -376,7 +473,7 @@ class QueryEngine:
+         node_id = self._store.find_node_id(name)
+         if node_id is None:
+             return []
+-        graph = self._store._graph  # noqa: SLF001
++        graph = self._store.graph
+         unit = graph.nodes.get(node_id)
+         if unit is None:
+             return []
+@@ -385,7 +482,7 @@ class QueryEngine:
+ 
+     def to_json(self, indent: int = 2) -> str:
+         """Serialize the full graph to JSON."""
+-        graph = self._store._graph  # noqa: SLF001
++        graph = self._store.graph
+         data = {
+             "language": graph.language,
+             "root_path": graph.root_path,
+diff --git a/src/trailmark/query/core.py b/src/trailmark/query/core.py
+new file mode 100644
+index 0000000..dd06a82
+--- /dev/null
++++ b/src/trailmark/query/core.py
+@@ -0,0 +1,321 @@
++"""The single query core: one name-resolution policy, one traversal semantics.
++
++WHY THIS MODULE EXISTS
++----------------------
++Three surfaces reach this graph -- the ``tmq`` CLI, the trailmark MCP server, and
++``l0-context-extract``'s batch KB commit. Each had grown its OWN name resolution and
++its own idea of what "reachable" means, and they disagreed:
++
++  * ``GraphStore.find_node`` returns the FIRST dict match, so ``find_node_id("drain")``
++    on a graph containing both ``IVault:IVault.drain`` and ``Vault:Vault.drain`` yields
++    whichever file happened to parse first. Parse order is not a resolution policy.
++  * the MCP unioned same-named variants with an ad-hoc ``id.split(".")[-1]``;
++  * ``tmq`` resolved to a list but then reported each variant SEPARATELY, so the impl
++    variant printed ``(0)`` next to an interface variant that had paths -- a zero that
++    reads as "unreachable" when it means "not under this name".
++
++Two implementations of one question give two answers, and the consumer cannot tell
++which is wrong. This module is the one implementation. Both surfaces are adapters over
++it and cannot drift again.
++
++Note the division of labor: the *graph* is repaired in
++``trailmark.analysis.proxies.resolve_proxy_calls`` (proxy nodes used to dead-end,
++severing every interface and ``this.f()`` call). This module does not paper over
++structural gaps -- it only decides which nodes a NAME denotes, and aggregates
++traversal over all of them.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from typing import TYPE_CHECKING
++
++from trailmark.analysis.proxies import bare_name as _proxy_bare_name
++from trailmark.models.nodes import NodeKind
++
++if TYPE_CHECKING:
++    from trailmark.storage.graph_store import GraphStore
++
++#: Node kinds that can appear as the source or target of a call.
++CALLABLE_KINDS = frozenset({NodeKind.FUNCTION, NodeKind.METHOD})
++
++#: Kinds a bare function-name query is allowed to denote. PROXY is included: an
++#: unresolved ``recv.f`` node legitimately stands for "some f" and callers asking
++#: "what reaches f" must see traffic arriving at it.
++NAME_TARGET_KINDS = frozenset(CALLABLE_KINDS | {NodeKind.PROXY})
++
++
++def _cutoff(max_depth: int) -> int:
++    """Convert ``max_depth`` in HOPS to the node-count cutoff the store expects.
++
++    Two sharp edges in the underlying ``rustworkx.digraph_all_simple_paths`` cutoff,
++    both measured rather than assumed:
++
++    * it counts NODES, not edges, so a genuine 3-hop path needs ``cutoff=4``. Passing
++      hops straight through silently dropped the longest legitimate path in the test
++      fixture -- an under-report, the direction that costs findings.
++    * ``cutoff=0`` means NO LIMIT. So ``max_depth=0``, the obvious way to write "don't
++      traverse", returned MORE paths than ``max_depth=1`` -- and on a large graph would
++      enumerate everything instead of nothing.
++
++    This module therefore takes ``max_depth`` in hops and rejects values below 1, so the
++    parameter cannot quietly invert its own meaning.
++    """
++    if max_depth < 1:
++        raise ValueError(
++            f"max_depth is in hops and must be >= 1, got {max_depth}. "
++            "(0 does not mean 'no traversal' -- the underlying cutoff reads it as "
++            "'unlimited', which is the opposite of what a caller intends.)"
++        )
++    return max_depth + 1
++
++
++#: Re-exported from ``trailmark.analysis.proxies``, which owns the ONE definition (a
++#: ``query`` import from there would be circular -- see that docstring). Two copies of
++#: this function is what let the naive ``split(".")`` survive: the graph repair and the
++#: resolver each had their own, so fixing one would not have fixed the other.
++bare_name = _proxy_bare_name
++
++
++@dataclass(frozen=True)
++class Resolution:
++    """What a name denotes, with enough detail for an honest answer.
++
++    ``ids`` is the full variant set; a caller that reports on only one of several
++    variants is obliged to say so, which is why ``variant_count`` is part of the
++    result rather than something each surface recomputes.
++    """
++
++    query: str
++    ids: tuple[str, ...] = ()
++    exact: bool = False
++    kinds: dict[str, int] = field(default_factory=dict)
++
++    def __bool__(self) -> bool:
++        return bool(self.ids)
++
++    @property
++    def variant_count(self) -> int:
++        return len(self.ids)
++
++    @property
++    def ambiguous(self) -> bool:
++        """True when a name denotes more than one node.
++
++        Not an error: an interface declaration plus its implementation plus an
++        unresolved proxy are three legitimate nodes for one name. It IS a fact the
++        consumer must surface, because "reachable" then means "reachable to any".
++        """
++        return len(self.ids) > 1
++
++
++def resolve(store: GraphStore, name: str, kinds: frozenset | None = None) -> Resolution:
++    """Resolve ``name`` to EVERY node it denotes, under one documented policy.
++
++    Policy, in precedence order:
++
++    1. **Exact node id** -- returns that single node, ``exact=True``. An explicit id is
++       an instruction, not a search; it is never widened to siblings.
++    2. **Qualified name** (contains ``.``, e.g. ``Vault.drain``) -- every node whose id
++       ends with ``:Vault.drain`` or ``.Vault.drain``, plus proxy nodes whose raw symbol
++       ends the same way. Scoped: ``Vault.drain`` will not match ``Other.drain``.
++    3. **Bare name** (``drain``) -- every node whose bare name is ``drain``. This is the
++       widening step, and it is deliberate: it is what makes the interface declaration,
++       the implementation, and ``proxy.unresolved:vault.drain`` one answer instead of
++       three disagreeing ones.
++
++    ``kinds`` filters the result; it defaults to ``NAME_TARGET_KINDS``. Results are
++    sorted, so a query answers identically across runs regardless of parse order --
++    the specific defect that made ``find_node_id`` unreliable.
++
++    Over-approximation is the intended failure direction. A surplus variant costs the
++    reader one dismissal; a missing variant costs a missed finding.
++    """
++    allowed = NAME_TARGET_KINDS if kinds is None else kinds
++    graph = store.graph
++
++    if name in graph.nodes:
++        node = graph.nodes[name]
++        return Resolution(query=name, ids=(name,), exact=True, kinds={node.kind.value: 1})
++
++    qualified = "." in name
++    matches: list[str] = []
++    for node_id, node in graph.nodes.items():
++        if node.kind not in allowed:
++            continue
++        if node.kind == NodeKind.PROXY:
++            raw = str(dict(node.attributes).get("raw_symbol") or node.name)
++            hit = raw == name or raw.endswith(f".{name}") if qualified else bare_name(raw) == name
++        elif qualified:
++            hit = node_id.endswith(f":{name}") or node_id.endswith(f".{name}") or node.name == name
++        else:
++            hit = bare_name(node_id) == name or node.name == name
++        if hit:
++            matches.append(node_id)
++
++    matches.sort()
++    kind_counts: dict[str, int] = {}
++    for node_id in matches:
++        k = graph.nodes[node_id].kind.value
++        kind_counts[k] = kind_counts.get(k, 0) + 1
++    return Resolution(query=name, ids=tuple(matches), kinds=kind_counts)
++
++
++def reaching_entrypoints(
++    store: GraphStore,
++    name: str,
++    *,
++    kinds: frozenset | None = None,
++) -> tuple[list[str], Resolution]:
++    """Entrypoints that can reach any variant of ``name``, at ANY depth.
++
++    This is the reachability VERDICT, and it is deliberately not derived from path
++    enumeration. Two reasons:
++
++    * **Correctness.** Path enumeration is depth-capped (``max_depth``, default 20). A
++      sink sitting 21 calls below an entrypoint yields zero paths, and a caller reading
++      "no paths" as "not reachable" gets a false negative -- the exact failure this
++      module exists to remove. Ancestor closure has no depth limit, so the verdict is
++      complete.
++    * **Cost.** On Enzyme (4.9k nodes) enumerating every path to ``getOwner`` at depth
++      20 produces 62k paths in ~4s; the ancestor set answers the same question in
++      milliseconds. Callers overwhelmingly want the verdict, not 62k paths.
++
++    Paths remain valuable as EVIDENCE, which is why :func:`entrypoint_paths` still
++    exists -- but evidence is bounded, and the verdict is not derived from it.
++    """
++    res = resolve(store, name, kinds=kinds)
++    entrypoints = set(store.graph.entrypoints)
++    reaching: set[str] = set()
++    for node_id in res.ids:
++        if node_id in entrypoints:
++            reaching.add(node_id)
++        reaching.update(store.ancestors_of(node_id) & entrypoints)
++    return sorted(reaching), res
++
++
++def entrypoint_paths(
++    store: GraphStore,
++    name: str,
++    *,
++    max_depth: int = 20,
++    limit: int | None = None,
++    kinds: frozenset | None = None,
++) -> tuple[list[list[str]], Resolution, bool]:
++    """Entrypoint->``name`` call paths, aggregated over ALL variants of the name.
++
++    Returns ``(paths, resolution, truncated)``, node IDS preserved -- never display
++    names. Collapsing to bare names here would make two distinct ``drain`` functions
++    look like one path and would leave the caller unable to re-query a node it just
++    saw; surfaces format labels at the edge, from the ids.
++
++    ``limit`` bounds how many paths are collected. ``truncated`` says whether anything
++    was dropped, and it is a required part of the return rather than an optional extra:
++    a truncated path list that looks complete is a silent under-report, and "the tool
++    showed me every path" is exactly the belief that turns a cap into a missed finding.
++
++    Do NOT read an empty list as "unreachable". It also happens when the name is
++    unknown, and when the only paths are longer than ``max_depth``. Use
++    :func:`reaching_entrypoints` for the verdict.
++    """
++    res = resolve(store, name, kinds=kinds)
++    paths: list[list[str]] = []
++    seen: set[tuple[str, ...]] = set()
++    truncated = False
++    for node_id in res.ids:
++        for path in store.entrypoint_paths_to(node_id, max_depth=_cutoff(max_depth)):
++            key = tuple(path)
++            if key in seen:
++                continue
++            if limit is not None and len(paths) >= limit:
++                truncated = True
++                break
++            seen.add(key)
++            paths.append(path)
++        if truncated:
++            break
++    paths.sort(key=lambda p: (len(p), p))
++    return paths, res, truncated
++
++
++def paths_between(
++    store: GraphStore,
++    src: str,
++    dst: str,
++    *,
++    max_depth: int = 20,
++) -> tuple[list[list[str]], Resolution, Resolution]:
++    """All call paths from any variant of ``src`` to any variant of ``dst``."""
++    src_res = resolve(store, src)
++    dst_res = resolve(store, dst)
++    paths: list[list[str]] = []
++    seen: set[tuple[str, ...]] = set()
++    for s in src_res.ids:
++        for d in dst_res.ids:
++            if s == d:
++                continue
++            for path in store.paths_between(s, d, _cutoff(max_depth)):
++                key = tuple(path)
++                if key not in seen:
++                    seen.add(key)
++                    paths.append(path)
++    paths.sort(key=lambda p: (len(p), p))
++    return paths, src_res, dst_res
++
++
++def neighbors(
++    store: GraphStore,
++    name: str,
++    *,
++    direction: str,
++) -> tuple[list[str], Resolution]:
++    """Direct callers (``direction="in"``) or callees (``"out"``) across all variants."""
++    if direction not in ("in", "out"):
++        raise ValueError(f"direction must be 'in' or 'out', got {direction!r}")
++    res = resolve(store, name)
++    out: set[str] = set()
++    for node_id in res.ids:
++        units = store.callers_of(node_id) if direction == "in" else store.callees_of(node_id)
++        out.update(u.id for u in units)
++    return sorted(out - set(res.ids)), res
++
++
++def closure(
++    store: GraphStore,
++    name: str,
++    *,
++    direction: str,
++) -> tuple[list[str], Resolution]:
++    """Transitive ancestors (``"in"``) or reachable set (``"out"``) across all variants."""
++    if direction not in ("in", "out"):
++        raise ValueError(f"direction must be 'in' or 'out', got {direction!r}")
++    res = resolve(store, name)
++    out: set[str] = set()
++    for node_id in res.ids:
++        if direction == "in":
++            out.update(store.ancestors_of(node_id))
++        else:
++            out.update(store.reachable_from(node_id))
++    return sorted(out - set(res.ids)), res
++
++
++def state_access(
++    store: GraphStore,
++    name: str,
++    *,
++    mode: str,
++) -> tuple[list[str], Resolution]:
++    """State variables a function ``"reads"`` or ``"writes"``, across all variants.
++
++    Solidity-only (the state web lives on the Solidity parser). Returns state-variable
++    node ids.
++    """
++    if mode not in ("reads", "writes"):
++        raise ValueError(f"mode must be 'reads' or 'writes', got {mode!r}")
++    res = resolve(store, name, kinds=CALLABLE_KINDS)
++    wanted = set(res.ids)
++    out: set[str] = set()
++    for edge in store.graph.edges:
++        if edge.kind.value == mode and edge.source_id in wanted:
++            out.add(edge.target_id)
++    return sorted(out), res
+diff --git a/src/trailmark/storage/graph_store.py b/src/trailmark/storage/graph_store.py
+index 125f8f0..65f16a8 100644
+--- a/src/trailmark/storage/graph_store.py
++++ b/src/trailmark/storage/graph_store.py
+@@ -23,6 +23,20 @@ class GraphStore:
+         self._graph = graph
+         self.rebuild_index()
+ 
++    @property
++    def graph(self) -> CodeGraph:
++        """The underlying graph. Read-only by convention.
++
++        Public because consumers legitimately need to enumerate nodes and edges, and
++        the alternative was every caller writing ``store._graph`` -- or worse,
++        ``engine._store._graph`` from outside the package entirely. A private attribute
++        that everybody reaches through is not encapsulation; it is an undocumented API
++        with no compatibility promise, which is precisely how the query surfaces drifted
++        apart. Mutating the returned graph invalidates the rustworkx indexes; call
++        ``rebuild_index()`` afterwards.
++        """
++        return self._graph
++
+     def rebuild_index(self) -> None:
+         """Rebuild all rustworkx indexes after graph nodes or edges change."""
+         self._digraph: rx.PyDiGraph[str, CodeEdge] = rx.PyDiGraph()
+diff --git a/tests/fixtures/kat/cli/analyze_summary.expected.txt b/tests/fixtures/kat/cli/analyze_summary.expected.txt
+index aad5cbe..666f709 100644
+--- a/tests/fixtures/kat/cli/analyze_summary.expected.txt
++++ b/tests/fixtures/kat/cli/analyze_summary.expected.txt
+@@ -2,6 +2,6 @@ Nodes: 20
+   Functions: 9
+   Classes: 2
+   Proxies: 8
+-Call edges: 8
++Call edges: 11
+ Dependencies: json, collections, typing
+ Entrypoints: 0
+diff --git a/tests/fixtures/kat/cpp/taxonomy.expected.json b/tests/fixtures/kat/cpp/taxonomy.expected.json
+index 2f48fb3..fe0c757 100644
+--- a/tests/fixtures/kat/cpp/taxonomy.expected.json
++++ b/tests/fixtures/kat/cpp/taxonomy.expected.json
+@@ -131,6 +131,17 @@
+       "kind": "calls",
+       "source": "taxonomy:use_animal",
+       "target": "proxy.unresolved:d.bark"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.bark",
++      "target": "taxonomy:Dog.bark"
+     }
+   ],
+   "language": "cpp",
+@@ -676,7 +687,7 @@
+   "root_path": "taxonomy.cpp",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 4,
++    "call_edges": 5,
+     "classes": 3,
+     "dependencies": [
+       "stdexcept",
+diff --git a/tests/fixtures/kat/diagram/call_graph_LR.expected.mmd b/tests/fixtures/kat/diagram/call_graph_LR.expected.mmd
+index 851640d..13f489c 100644
+--- a/tests/fixtures/kat/diagram/call_graph_LR.expected.mmd
++++ b/tests/fixtures/kat/diagram/call_graph_LR.expected.mmd
+@@ -27,3 +27,6 @@ flowchart LR
+     taxonomy_Dog_bark --> proxy_unresolved_taxonomy_ValueError
+     taxonomy_use_animal -.-> proxy_unresolved_d_bark
+     taxonomy_use_animal -.-> proxy_unresolved_json_dumps
++    proxy_unresolved_super____init__ -.-> taxonomy_Animal___init__
++    proxy_unresolved_super____init__ -.-> taxonomy_Dog___init__
++    proxy_unresolved_d_bark -.-> taxonomy_Dog_bark
+diff --git a/tests/fixtures/kat/diagram/call_graph_TD.expected.mmd b/tests/fixtures/kat/diagram/call_graph_TD.expected.mmd
+index 058a2da..e423bb9 100644
+--- a/tests/fixtures/kat/diagram/call_graph_TD.expected.mmd
++++ b/tests/fixtures/kat/diagram/call_graph_TD.expected.mmd
+@@ -27,3 +27,6 @@ flowchart TD
+     taxonomy_Dog_bark --> proxy_unresolved_taxonomy_ValueError
+     taxonomy_use_animal -.-> proxy_unresolved_d_bark
+     taxonomy_use_animal -.-> proxy_unresolved_json_dumps
++    proxy_unresolved_super____init__ -.-> taxonomy_Animal___init__
++    proxy_unresolved_super____init__ -.-> taxonomy_Dog___init__
++    proxy_unresolved_d_bark -.-> taxonomy_Dog_bark
+diff --git a/tests/fixtures/kat/diagram/call_graph_focus_bark.expected.mmd b/tests/fixtures/kat/diagram/call_graph_focus_bark.expected.mmd
+index 10a8525..abdee0b 100644
+--- a/tests/fixtures/kat/diagram/call_graph_focus_bark.expected.mmd
++++ b/tests/fixtures/kat/diagram/call_graph_focus_bark.expected.mmd
+@@ -1,4 +1,6 @@
+ flowchart LR
+     taxonomy_Dog_bark["bark, method, CC=2"]
+     proxy_unresolved_taxonomy_ValueError["taxonomy:ValueError, proxy"]
++    proxy_unresolved_d_bark["d.bark, proxy"]
+     taxonomy_Dog_bark --> proxy_unresolved_taxonomy_ValueError
++    proxy_unresolved_d_bark -.-> taxonomy_Dog_bark
+diff --git a/tests/fixtures/kat/go/taxonomy.expected.json b/tests/fixtures/kat/go/taxonomy.expected.json
+index dbcc093..b64f9fb 100644
+--- a/tests/fixtures/kat/go/taxonomy.expected.json
++++ b/tests/fixtures/kat/go/taxonomy.expected.json
+@@ -134,6 +134,17 @@
+       "kind": "calls",
+       "source": "taxonomy:UseAnimal",
+       "target": "proxy.unresolved:d.Bark"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.Bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.Bark",
++      "target": "taxonomy:Dog.Bark"
+     }
+   ],
+   "language": "go",
+@@ -640,7 +651,7 @@
+   "root_path": "taxonomy.go",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 8,
++    "call_edges": 9,
+     "classes": 0,
+     "dependencies": [
+       "errors",
+diff --git a/tests/fixtures/kat/javascript/taxonomy.expected.json b/tests/fixtures/kat/javascript/taxonomy.expected.json
+index facd8bc..a30cf64 100644
+--- a/tests/fixtures/kat/javascript/taxonomy.expected.json
++++ b/tests/fixtures/kat/javascript/taxonomy.expected.json
+@@ -98,6 +98,17 @@
+       "kind": "calls",
+       "source": "taxonomy:useAnimal",
+       "target": "proxy.unresolved:d.bark"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.bark",
++      "target": "taxonomy:Dog.bark"
+     }
+   ],
+   "language": "javascript",
+@@ -545,7 +556,7 @@
+   "root_path": "taxonomy.js",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 3,
++    "call_edges": 4,
+     "classes": 2,
+     "dependencies": [
+       "fs"
+diff --git a/tests/fixtures/kat/kotlin/taxonomy.expected.json b/tests/fixtures/kat/kotlin/taxonomy.expected.json
+index 56530b0..16d1b97 100644
+--- a/tests/fixtures/kat/kotlin/taxonomy.expected.json
++++ b/tests/fixtures/kat/kotlin/taxonomy.expected.json
+@@ -116,6 +116,17 @@
+       "kind": "type_uses",
+       "source": "taxonomy:useAnimal",
+       "target": "taxonomy:Dog"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.bark",
++      "target": "taxonomy:Dog.bark"
+     }
+   ],
+   "language": "kotlin",
+@@ -626,7 +637,7 @@
+   "root_path": "taxonomy.kt",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 4,
++    "call_edges": 5,
+     "classes": 3,
+     "dependencies": [],
+     "entrypoints": 0,
+diff --git a/tests/fixtures/kat/python/taxonomy.expected.json b/tests/fixtures/kat/python/taxonomy.expected.json
+index 2883494..48e6230 100644
+--- a/tests/fixtures/kat/python/taxonomy.expected.json
++++ b/tests/fixtures/kat/python/taxonomy.expected.json
+@@ -197,6 +197,39 @@
+       "kind": "type_uses",
+       "source": "taxonomy:use_animal",
+       "target": "taxonomy:Dog"
++    },
++    {
++      "attributes": {
++        "candidates": 2,
++        "raw_symbol": "super().__init__",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:super_.__init__",
++      "target": "taxonomy:Animal.__init__"
++    },
++    {
++      "attributes": {
++        "candidates": 2,
++        "raw_symbol": "super().__init__",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:super_.__init__",
++      "target": "taxonomy:Dog.__init__"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.bark",
++      "target": "taxonomy:Dog.bark"
+     }
+   ],
+   "language": "python",
+@@ -863,7 +896,7 @@
+   "root_path": "taxonomy.py",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 8,
++    "call_edges": 11,
+     "classes": 2,
+     "dependencies": [
+       "json",
+diff --git a/tests/fixtures/kat/rust/taxonomy.expected.json b/tests/fixtures/kat/rust/taxonomy.expected.json
+index fa0ced0..f8293b8 100644
+--- a/tests/fixtures/kat/rust/taxonomy.expected.json
++++ b/tests/fixtures/kat/rust/taxonomy.expected.json
+@@ -182,6 +182,39 @@
+       "kind": "calls",
+       "source": "taxonomy:use_animal",
+       "target": "proxy.unresolved:d.bark"
++    },
++    {
++      "attributes": {
++        "candidates": 2,
++        "raw_symbol": "Animal::new",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:Animal::new",
++      "target": "taxonomy:Animal.new"
++    },
++    {
++      "attributes": {
++        "candidates": 2,
++        "raw_symbol": "Animal::new",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:Animal::new",
++      "target": "taxonomy:Dog.new"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.bark",
++      "target": "taxonomy:Dog.bark"
+     }
+   ],
+   "language": "rust",
+@@ -824,7 +857,7 @@
+   "root_path": "taxonomy.rs",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 11,
++    "call_edges": 14,
+     "classes": 0,
+     "dependencies": [
+       "std"
+diff --git a/tests/fixtures/kat/solidity/taxonomy.expected.json b/tests/fixtures/kat/solidity/taxonomy.expected.json
+index 291536c..0454324 100644
+--- a/tests/fixtures/kat/solidity/taxonomy.expected.json
++++ b/tests/fixtures/kat/solidity/taxonomy.expected.json
+@@ -18,12 +18,36 @@
+       "source": "taxonomy",
+       "target": "taxonomy:Animal"
+     },
++    {
++      "confidence": "certain",
++      "kind": "contains",
++      "source": "taxonomy:Animal",
++      "target": "taxonomy:Animal.name"
++    },
++    {
++      "confidence": "certain",
++      "kind": "contains",
++      "source": "taxonomy:Animal",
++      "target": "taxonomy:Animal.species"
++    },
+     {
+       "confidence": "certain",
+       "kind": "contains",
+       "source": "taxonomy:Animal",
+       "target": "taxonomy:Animal.constructor"
+     },
++    {
++      "confidence": "certain",
++      "kind": "writes",
++      "source": "taxonomy:Animal.constructor",
++      "target": "taxonomy:Animal.name"
++    },
++    {
++      "confidence": "certain",
++      "kind": "writes",
++      "source": "taxonomy:Animal.constructor",
++      "target": "taxonomy:Animal.species"
++    },
+     {
+       "confidence": "certain",
+       "kind": "contains",
+@@ -39,6 +63,18 @@
+       "source": "taxonomy:Animal.describe",
+       "target": "proxy.unresolved:abi.encodePacked"
+     },
++    {
++      "confidence": "certain",
++      "kind": "reads",
++      "source": "taxonomy:Animal.describe",
++      "target": "taxonomy:Animal.name"
++    },
++    {
++      "confidence": "certain",
++      "kind": "reads",
++      "source": "taxonomy:Animal.describe",
++      "target": "taxonomy:Animal.species"
++    },
+     {
+       "confidence": "certain",
+       "kind": "contains",
+@@ -57,12 +93,30 @@
+       "source": "taxonomy:Dog",
+       "target": "taxonomy:IGreeter"
+     },
++    {
++      "confidence": "certain",
++      "kind": "contains",
++      "source": "taxonomy:Dog",
++      "target": "taxonomy:Dog.CONSTANT"
++    },
++    {
++      "confidence": "certain",
++      "kind": "contains",
++      "source": "taxonomy:Dog",
++      "target": "taxonomy:Dog.breed"
++    },
+     {
+       "confidence": "certain",
+       "kind": "contains",
+       "source": "taxonomy:Dog",
+       "target": "taxonomy:Dog.constructor"
+     },
++    {
++      "confidence": "certain",
++      "kind": "writes",
++      "source": "taxonomy:Dog.constructor",
++      "target": "taxonomy:Dog.breed"
++    },
+     {
+       "confidence": "certain",
+       "kind": "contains",
+@@ -119,6 +173,47 @@
+       "kind": "calls",
+       "source": "taxonomy:Dog.useAnimal",
+       "target": "proxy.unresolved:taxonomy:bark"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "taxonomy:bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:taxonomy:bark",
++      "target": "taxonomy:Dog.bark"
++    },
++    {
++      "attributes": {
++        "declared_in": "taxonomy:Animal",
++        "resolution": "inherited-state"
++      },
++      "confidence": "inferred",
++      "kind": "writes",
++      "source": "taxonomy:Dog.constructor",
++      "target": "taxonomy:Animal.species"
++    },
++    {
++      "attributes": {
++        "declared_in": "taxonomy:Animal",
++        "resolution": "inherited-state"
++      },
++      "confidence": "inferred",
++      "kind": "reads",
++      "source": "taxonomy:Dog.bark",
++      "target": "taxonomy:Animal.name"
++    },
++    {
++      "attributes": {
++        "declared_in": "taxonomy:Animal",
++        "resolution": "inherited-state"
++      },
++      "confidence": "inferred",
++      "kind": "reads",
++      "source": "taxonomy:Dog.greet",
++      "target": "taxonomy:Animal.name"
+     }
+   ],
+   "language": "solidity",
+@@ -240,7 +335,8 @@
+       "attributes": {
+         "solidity_container_kind": "contract",
+         "solidity_mutability": "view",
+-        "solidity_visibility": "public"
++        "solidity_visibility": "public",
++        "storage_arg_calls": "encodePacked#0:name;encodePacked#2:species"
+       },
+       "branches": [],
+       "cyclomatic_complexity": 1,
+@@ -263,6 +359,48 @@
+         "name": "string"
+       }
+     },
++    "taxonomy:Animal.name": {
++      "attributes": {
++        "solidity_visibility": "public"
++      },
++      "branches": [],
++      "cyclomatic_complexity": null,
++      "docstring": null,
++      "exception_types": [],
++      "id": "taxonomy:Animal.name",
++      "kind": "state_variable",
++      "location": {
++        "end_col": 23,
++        "end_line": 11,
++        "file_path": "taxonomy.sol",
++        "start_col": 4,
++        "start_line": 11
++      },
++      "name": "name",
++      "parameters": [],
++      "return_type": null
++    },
++    "taxonomy:Animal.species": {
++      "attributes": {
++        "solidity_visibility": "public"
++      },
++      "branches": [],
++      "cyclomatic_complexity": null,
++      "docstring": null,
++      "exception_types": [],
++      "id": "taxonomy:Animal.species",
++      "kind": "state_variable",
++      "location": {
++        "end_col": 26,
++        "end_line": 12,
++        "file_path": "taxonomy.sol",
++        "start_col": 4,
++        "start_line": 12
++      },
++      "name": "species",
++      "parameters": [],
++      "return_type": null
++    },
+     "taxonomy:Dog": {
+       "branches": [],
+       "cyclomatic_complexity": null,
+@@ -281,6 +419,27 @@
+       "parameters": [],
+       "return_type": null
+     },
++    "taxonomy:Dog.CONSTANT": {
++      "attributes": {
++        "solidity_visibility": "public"
++      },
++      "branches": [],
++      "cyclomatic_complexity": null,
++      "docstring": null,
++      "exception_types": [],
++      "id": "taxonomy:Dog.CONSTANT",
++      "kind": "state_variable",
++      "location": {
++        "end_col": 42,
++        "end_line": 25,
++        "file_path": "taxonomy.sol",
++        "start_col": 4,
++        "start_line": 25
++      },
++      "name": "CONSTANT",
++      "parameters": [],
++      "return_type": null
++    },
+     "taxonomy:Dog.add": {
+       "attributes": {
+         "solidity_container_kind": "contract",
+@@ -330,7 +489,9 @@
+     "taxonomy:Dog.bark": {
+       "attributes": {
+         "solidity_container_kind": "contract",
+-        "solidity_visibility": "public"
++        "solidity_visibility": "public",
++        "state_read_candidates": "Barked,TooLoud,name",
++        "storage_arg_calls": "encodePacked#0:name"
+       },
+       "branches": [
+         {
+@@ -477,9 +638,31 @@
+         "name": "uint256"
+       }
+     },
++    "taxonomy:Dog.breed": {
++      "attributes": {
++        "solidity_visibility": "public"
++      },
++      "branches": [],
++      "cyclomatic_complexity": null,
++      "docstring": null,
++      "exception_types": [],
++      "id": "taxonomy:Dog.breed",
++      "kind": "state_variable",
++      "location": {
++        "end_col": 24,
++        "end_line": 27,
++        "file_path": "taxonomy.sol",
++        "start_col": 4,
++        "start_line": 27
++      },
++      "name": "breed",
++      "parameters": [],
++      "return_type": null
++    },
+     "taxonomy:Dog.constructor": {
+       "attributes": {
+-        "solidity_container_kind": "contract"
++        "solidity_container_kind": "contract",
++        "state_write_candidates": "species"
+       },
+       "branches": [],
+       "cyclomatic_complexity": 1,
+@@ -522,7 +705,9 @@
+         "solidity_container_kind": "contract",
+         "solidity_mutability": "view",
+         "solidity_override": "true",
+-        "solidity_visibility": "external"
++        "solidity_visibility": "external",
++        "state_read_candidates": "name",
++        "storage_arg_calls": "encodePacked#0:name"
+       },
+       "branches": [],
+       "cyclomatic_complexity": 1,
+@@ -558,7 +743,8 @@
+     "taxonomy:Dog.useAnimal": {
+       "attributes": {
+         "solidity_container_kind": "contract",
+-        "solidity_visibility": "external"
++        "solidity_visibility": "external",
++        "state_read_candidates": "bark"
+       },
+       "branches": [],
+       "cyclomatic_complexity": 1,
+@@ -640,12 +826,12 @@
+   "root_path": "taxonomy.sol",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 4,
++    "call_edges": 5,
+     "classes": 0,
+     "dependencies": [],
+     "entrypoints": 0,
+     "functions": 9,
+     "proxies": 2,
+-    "total_nodes": 15
++    "total_nodes": 19
+   }
+ }
+diff --git a/tests/fixtures/kat/swift/taxonomy.expected.json b/tests/fixtures/kat/swift/taxonomy.expected.json
+index b1459dc..8ad9b94 100644
+--- a/tests/fixtures/kat/swift/taxonomy.expected.json
++++ b/tests/fixtures/kat/swift/taxonomy.expected.json
+@@ -128,6 +128,17 @@
+       "kind": "type_uses",
+       "source": "taxonomy:useAnimal",
+       "target": "taxonomy:Dog"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.bark",
++      "target": "taxonomy:Dog.bark"
+     }
+   ],
+   "language": "swift",
+@@ -606,7 +617,7 @@
+   "root_path": "taxonomy.swift",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 4,
++    "call_edges": 5,
+     "classes": 2,
+     "dependencies": [
+       "Foundation"
+diff --git a/tests/fixtures/kat/typescript/taxonomy.expected.json b/tests/fixtures/kat/typescript/taxonomy.expected.json
+index bf6a717..405205a 100644
+--- a/tests/fixtures/kat/typescript/taxonomy.expected.json
++++ b/tests/fixtures/kat/typescript/taxonomy.expected.json
+@@ -137,6 +137,17 @@
+       "kind": "type_uses",
+       "source": "taxonomy:useAnimal",
+       "target": "taxonomy:Dog"
++    },
++    {
++      "attributes": {
++        "candidates": 1,
++        "raw_symbol": "d.bark",
++        "resolution": "proxy-name-union"
++      },
++      "confidence": "inferred",
++      "kind": "calls",
++      "source": "proxy.unresolved:d.bark",
++      "target": "taxonomy:Dog.bark"
+     }
+   ],
+   "language": "typescript",
+@@ -748,7 +759,7 @@
+   "root_path": "taxonomy.ts",
+   "subgraphs": {},
+   "summary": {
+-    "call_edges": 3,
++    "call_edges": 4,
+     "classes": 2,
+     "dependencies": [
+       "fs"
+diff --git a/tests/test_query_core.py b/tests/test_query_core.py
+new file mode 100644
+index 0000000..c863fd5
+--- /dev/null
++++ b/tests/test_query_core.py
+@@ -0,0 +1,649 @@
++"""Regression tests for the unified query core.
++
++These lock in the fix for a real audit-tool defect: the call graph was SEVERED at every
++proxy node, so a sink reachable through an interface call or a ``this.f()`` self-call was
++reported as unreachable from any entrypoint. In an audit that failure direction is the
++expensive one -- "can an attacker reach this sink?" answered *no* when the truth is *yes*.
++
++Each test below names the specific wrong answer it prevents.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++import pytest
++
++from trailmark.analysis.proxies import resolve_proxy_calls
++from trailmark.models.edges import EdgeConfidence, EdgeKind
++from trailmark.query import core
++from trailmark.query.api import QueryEngine
++
++IVAULT = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++interface IVault {
++    function drain(address to) external;
++}
++"""
++
++VAULT = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++contract Vault {
++    uint256 public total;
++    address public owner;
++
++    // THE SINK: internal, so not an entrypoint itself. Has no interface or proxy
++    // variant of its own -- which is why target-side name-union cannot reconnect it.
++    function _sweep(address to) internal {
++        total = 0;
++        owner = to;
++    }
++
++    function selfDrain() public {
++        _sweep(msg.sender);
++    }
++
++    function drain(address to) external {
++        _sweep(to);
++    }
++
++    function poke() external {
++        this.selfDrain();
++    }
++}
++"""
++
++ROUTER = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++import "./IVault.sol";
++
++contract Router {
++    IVault public vault;
++
++    function routeDrain(address to) external {
++        vault.drain(to);
++    }
++}
++"""
++
++
++@pytest.fixture
++def engine(tmp_path: Path) -> QueryEngine:
++    """A three-contract graph with both divergence shapes.
++
++    ``Router.routeDrain`` reaches ``Vault._sweep`` only through an interface-typed call;
++    ``Vault.poke`` reaches it only through a ``this.selfDrain()`` self-call.
++    """
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "IVault.sol").write_text(IVAULT)
++    (src / "Vault.sol").write_text(VAULT)
++    (src / "Router.sol").write_text(ROUTER)
++    return QueryEngine.from_directory(str(src), language="solidity")
++
++
++# --------------------------------------------------------------- graph repair
++
++
++def test_proxy_nodes_are_not_dead_ends(engine: QueryEngine) -> None:
++    """Before the fix, reachable_from(routeDrain) was exactly {the proxy node}.
++
++    The whole Vault subtree was invisible from Router, so every downstream sink looked
++    unreachable from the one untrusted caller that actually reaches it.
++    """
++    reachable = {n["id"] for n in engine.reachable_from("Router:Router.routeDrain")}
++    assert "Vault:Vault.drain" in reachable
++    assert "Vault:Vault._sweep" in reachable
++
++
++def test_interface_call_path_is_found(engine: QueryEngine) -> None:
++    """The interface-mediated route must appear, with the proxy hop preserved."""
++    paths = engine.paths_between("Router:Router.routeDrain", "Vault:Vault._sweep")
++    assert paths, "interface-mediated path is missing -- the false negative is back"
++    assert any("proxy.unresolved:vault.drain" in p for p in paths), (
++        "the proxy hop must stay ON the path so a reader can see that resolution "
++        "was inferred rather than statically proven"
++    )
++
++
++def test_self_call_path_is_found(engine: QueryEngine) -> None:
++    """`this.selfDrain()` must not sever poke from the sink."""
++    ancestors = {n["id"] for n in engine.ancestors_of("_sweep")}
++    assert "Vault:Vault.poke" in ancestors
++    assert "Router:Router.routeDrain" in ancestors
++
++
++def test_resolved_proxy_edges_are_marked_inferred(engine: QueryEngine) -> None:
++    """Over-approximated edges must be labelled, so consumers can report fidelity.
++
++    An inferred edge that claims to be certain is worse than no edge: it launders a
++    guess into a fact.
++    """
++    graph = engine.store.graph
++    resolved = [
++        e
++        for e in graph.edges
++        if e.kind == EdgeKind.CALLS and dict(e.attributes).get("resolution") == "proxy-name-union"
++    ]
++    assert resolved
++    assert all(e.confidence == EdgeConfidence.INFERRED for e in resolved)
++
++
++def test_bare_name_strips_the_module_path_first() -> None:
++    """A MODULE-qualified symbol must resolve to the callable's own name.
++
++    Module paths are separated from the member by ``:`` and contain dots as PATH
++    separators. Splitting on ``.`` alone yielded ``AddressListRegistry:isInList``, which
++    matches no function -- so the proxy stayed unresolved and the graph stayed severed.
++    That shape is the COMMON case on real imports (260 proxies on Enzyme, resolvable
++    share 50% -> 68%) while the toy ``vault.drain`` shape in the fixture above passed
++    either way, which is exactly why it went unnoticed.
++    """
++    assert core.bare_name("persistent.address-list-registry.AddressListRegistry:isInList") == (
++        "isInList"
++    )
++    assert core.bare_name("Vault:Vault.drain") == "drain"
++    assert core.bare_name("proxy.unresolved:this.selfDrain") == "selfDrain"
++    assert core.bare_name("vault.drain") == "drain"
++    assert core.bare_name("Animal::new") == "new"
++
++
++def test_bare_name_has_one_definition() -> None:
++    """core re-exports the analysis-layer function; two copies is how the bug survived."""
++    from trailmark.analysis import proxies
++
++    assert core.bare_name is proxies.bare_name
++
++
++def test_resolve_proxy_calls_is_idempotent(engine: QueryEngine) -> None:
++    """Re-running the pass must not duplicate edges (it runs per-file AND on merge)."""
++    graph = engine.store.graph
++    before = len(graph.edges)
++    assert resolve_proxy_calls(graph) == 0
++    assert len(graph.edges) == before
++
++
++# --------------------------------------------------------------- inherited state
++
++BASE_STORAGE = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++contract VaultStorageBase {
++    address internal owner;
++    mapping(address => bool) internal isManager;
++    // A state variable named like a builtin MEMBER. Must still resolve: over-filtering
++    // these is how a real inherited write gets silently dropped.
++    string internal name;
++}
++"""
++
++DERIVED = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++import "./VaultStorageBase.sol";
++
++contract DerivedVault is VaultStorageBase {
++    function claim() external {
++        address prev = owner;
++        owner = msg.sender;
++        isManager[msg.sender] = true;
++        emit Claimed(prev, name);
++    }
++
++    event Claimed(address prev, string n);
++}
++"""
++
++
++@pytest.fixture
++def inherited(tmp_path: Path) -> QueryEngine:
++    """Split base storage -- the standard upgradeable-proxy convention."""
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "VaultStorageBase.sol").write_text(BASE_STORAGE)
++    (src / "DerivedVault.sol").write_text(DERIVED)
++    return QueryEngine.from_directory(str(src), language="solidity")
++
++
++def test_inherits_edges_resolve_across_files(inherited: QueryEngine) -> None:
++    """The parser builds an inherits target from the SOURCE file's module prefix.
++
++    It cannot know which file declares the base, so every such edge dangled: 0 of 283
++    resolved on Enzyme. An inheritance graph nothing can traverse is not a graph.
++    """
++    graph = inherited.store.graph
++    inherits = [e for e in graph.edges if e.kind == EdgeKind.INHERITS]
++    assert inherits
++    assert any(e.target_id in graph.nodes for e in inherits), (
++        "no inherits edge resolves to a real node -- the chain is untraversable"
++    )
++
++
++def test_state_declared_in_a_base_file_is_attributed(inherited: QueryEngine) -> None:
++    """The defect this pass exists for.
++
++    `DerivedVault.claim` plainly writes `owner` and `isManager`, but both are declared in
++    VaultStorageBase.sol, so the state web reported ZERO -- indistinguishable from a
++    genuinely state-free function, on exactly the split-storage layout that upgradeable
++    protocols use.
++    """
++    writes = {n["id"].split(":")[-1] for n in inherited.writes_of("DerivedVault.claim")}
++    assert "VaultStorageBase.owner" in writes
++    assert "VaultStorageBase.isManager" in writes
++
++
++def test_inherited_state_edges_are_marked_inferred(inherited: QueryEngine) -> None:
++    """Name-matched against a base is strong evidence, not compiler-verified fact."""
++    graph = inherited.store.graph
++    inherited_edges = [
++        e for e in graph.edges if dict(e.attributes).get("resolution") == "inherited-state"
++    ]
++    assert inherited_edges
++    assert all(e.confidence == EdgeConfidence.INFERRED for e in inherited_edges)
++    assert all(dict(e.attributes).get("declared_in") for e in inherited_edges)
++
++
++def test_builtin_filter_does_not_drop_state_named_like_a_member(
++    inherited: QueryEngine,
++) -> None:
++    """`name`, `balance`, `value` are among the COMMONEST Solidity state names.
++
++    They also appear as members of globals (`msg.value`, `abi.encode`). Filtering them out
++    of the candidate list to reduce noise would silently drop real inherited state -- an
++    under-report, which is the expensive direction. Only reserved words may be filtered.
++    """
++    reads = {n["id"].split(":")[-1] for n in inherited.reads_of("DerivedVault.claim")}
++    assert "VaultStorageBase.name" in reads
++
++
++TUPLE_WRITER = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++contract Reserves {
++    uint112 reserveX;
++    uint112 reserveY;
++    mapping(address => uint256) balances;
++
++    function sync() external {
++        (reserveX, reserveY) = _cast();
++    }
++
++    function credit(address to) external {
++        balances[to] = 1;
++    }
++
++    function _cast() internal pure returns (uint112, uint112) {
++        return (1, 2);
++    }
++}
++"""
++
++
++def test_tuple_destructuring_records_every_write(tmp_path: Path) -> None:
++    """`(a, b) = f()` must write BOTH targets.
++
++    The LHS walker returned the first identifier it found, so on Ammalgam
++    `(referenceReserveX, referenceReserveY) = _castReserves(...)` recorded a write to
++    referenceReserveX only -- a state variable that is plainly assigned had one fewer
++    writer than it really has. Multi-writer state is exactly what the writers-graph and
++    the fold layer key on, so a dropped writer understates cross-operation asymmetry
++    where it matters most. Slither caught it; the compile-free tier must too.
++    """
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "Reserves.sol").write_text(TUPLE_WRITER)
++    qe = QueryEngine.from_directory(str(src), language="solidity")
++    writes = {n["id"].split(":")[-1] for n in qe.writes_of("Reserves.sync")}
++    assert writes == {"Reserves.reserveX", "Reserves.reserveY"}
++
++
++def test_indexed_write_is_still_a_single_write(tmp_path: Path) -> None:
++    """Unwrapping must not turn `balances[to] = 1` into a write to `to`."""
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "Reserves.sol").write_text(TUPLE_WRITER)
++    qe = QueryEngine.from_directory(str(src), language="solidity")
++    writes = {n["id"].split(":")[-1] for n in qe.writes_of("Reserves.credit")}
++    assert writes == {"Reserves.balances"}
++
++
++FIELD_SHADOW = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++contract Shadow {
++    uint256 reserveX;
++    uint256 total;
++
++    struct Params { uint256 reserveX; }
++
++    function viaMember(Params memory p) external view returns (uint256) {
++        // p.reserveX is a FIELD on a local, not the state variable.
++        return p.reserveX + total;
++    }
++
++    function viaStructLiteral(uint256 v) external pure returns (Params memory) {
++        // `reserveX:` here is a struct-member KEY, not the state variable.
++        return Params({reserveX: v});
++    }
++}
++"""
++
++
++def test_member_field_is_not_a_state_read(tmp_path: Path) -> None:
++    """`p.reserveX` must not count as a read of the state variable `reserveX`.
++
++    Measured on Ammalgam: `inputParams.activeLiquidityAssets` (a field on a LOCAL struct)
++    was recorded as a read of `TokenController.activeLiquidityAssets`, giving that
++    variable six readers it does not have. Not harmless over-approximation -- reader and
++    co-writer counts feed the writers-graph and the frontier's exposure score, so
++    fabricated edges distort what the loop prioritises.
++    """
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "Shadow.sol").write_text(FIELD_SHADOW)
++    qe = QueryEngine.from_directory(str(src), language="solidity")
++    reads = {n["id"].split(":")[-1] for n in qe.reads_of("Shadow.viaMember")}
++    assert "Shadow.total" in reads, "a genuine state read must survive the filter"
++    assert "Shadow.reserveX" not in reads
++
++
++def test_struct_literal_key_is_not_a_state_read(tmp_path: Path) -> None:
++    """`Params({reserveX: v})` -- the key is a member name, not this contract's state.
++
++    Ammalgam's `computeAssetsState` never touches `reserveXAssets`, but the struct
++    literal `reserveXAssets: _reserveXAssets` made it look like a reader.
++    """
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "Shadow.sol").write_text(FIELD_SHADOW)
++    qe = QueryEngine.from_directory(str(src), language="solidity")
++    reads = {n["id"].split(":")[-1] for n in qe.reads_of("Shadow.viaStructLiteral")}
++    assert "Shadow.reserveX" not in reads
++
++
++def test_inheritance_passes_are_idempotent(inherited: QueryEngine) -> None:
++    """They run per-file AND on the merged graph; neither may duplicate edges."""
++    from trailmark.analysis.inheritance import resolve_inherited_state, resolve_inherits_edges
++
++    graph = inherited.store.graph
++    before = len(graph.edges)
++    assert resolve_inherits_edges(graph) == 0
++    assert resolve_inherited_state(graph) == 0
++    assert len(graph.edges) == before
++
++
++# --------------------------------------------------------------- storage pointers
++
++POINTER_LIB = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++library Sat {
++    struct S { uint16 maxLeaf; }
++    function update(S storage st, uint16 v) internal { helper(st, v); }
++    function helper(S storage st, uint16 v) internal { st.maxLeaf = v; }
++    function inspect(S storage st) internal view returns (uint16) { return st.maxLeaf; }
++}
++"""
++
++POINTER_HOLDER = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.20;
++
++import "./Sat.sol";
++
++contract Holder {
++    mapping(address => Sat.S) satData;
++    Sat.S other;
++
++    function viaAlias() external {
++        Sat.S storage p = satData[msg.sender];
++        p.maxLeaf = 1;            // direct alias write
++    }
++
++    function viaLibrary() external {
++        Sat.S storage p = satData[msg.sender];
++        Sat.update(p, 5);         // write happens 2 hops away, inside the library
++    }
++
++    function viaDirectArg() external {
++        Sat.update(satData[msg.sender], 7);   // no alias at all
++    }
++
++    function readOnly() external view returns (uint16) {
++        Sat.S storage p = other;
++        return Sat.inspect(p);    // callee only reads -> must NOT be a writer
++    }
++
++    function memoryCopy() external view returns (uint16) {
++        Sat.S memory m = satData[msg.sender];
++        return m.maxLeaf;         // mutating a copy would change nothing
++    }
++}
++"""
++
++
++@pytest.fixture
++def pointers(tmp_path: Path) -> QueryEngine:
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "Sat.sol").write_text(POINTER_LIB)
++    (src / "Holder.sol").write_text(POINTER_HOLDER)
++    return QueryEngine.from_directory(str(src), language="solidity")
++
++
++def test_local_storage_alias_write_is_attributed(pointers: QueryEngine) -> None:
++    """`S storage p = satData[k]; p.f = v` writes satData while naming it nowhere."""
++    writes = {n["id"].split(":")[-1] for n in pointers.writes_of("Holder.viaAlias")}
++    assert "Holder.satData" in writes
++
++
++def test_write_through_a_library_storage_param_is_attributed(
++    pointers: QueryEngine,
++) -> None:
++    """The case that made Ammalgam's saturation state look unwritten.
++
++    `Sat.update(p, v)` -> `helper(st, v)` -> `st.maxLeaf = v`. The library has NO state of
++    its own, so the write names no state variable anywhere in the callee -- invisible to a
++    name-based state web AND to grep. Before this pass `satDataGivenPair` and
++    `TWAPDataGivenPair` had ZERO recorded writers, which would make any certificate
++    quantifying over "all writers" vacuously true.
++    """
++    writes = {n["id"].split(":")[-1] for n in pointers.writes_of("Holder.viaLibrary")}
++    assert "Holder.satData" in writes
++
++
++def test_state_passed_directly_as_an_argument_is_attributed(
++    pointers: QueryEngine,
++) -> None:
++    """`Sat.update(satData[k], v)` -- no local alias; this is Ammalgam's actual shape."""
++    writes = {n["id"].split(":")[-1] for n in pointers.writes_of("Holder.viaDirectArg")}
++    assert "Holder.satData" in writes
++
++
++def test_read_only_library_call_is_not_a_write(pointers: QueryEngine) -> None:
++    """Over-approximating writers has a cost: it inflates multi-writer asymmetry.
++
++    Only callees that actually mutate the storage parameter may create a writer.
++    """
++    writes = {n["id"].split(":")[-1] for n in pointers.writes_of("Holder.readOnly")}
++    assert "Holder.other" not in writes
++
++
++def test_memory_copy_is_not_a_state_write(pointers: QueryEngine) -> None:
++    """`S memory m = ...` is a COPY; mutating it changes no state."""
++    writes = {n["id"].split(":")[-1] for n in pointers.writes_of("Holder.memoryCopy")}
++    assert writes == set()
++
++
++def test_storage_pointer_edges_are_marked_inferred(pointers: QueryEngine) -> None:
++    from trailmark.analysis.storage_pointers import resolve_storage_pointer_writes
++
++    graph = pointers.store.graph
++    edges = [e for e in graph.edges if dict(e.attributes).get("resolution") == "storage-pointer"]
++    assert edges
++    assert all(e.confidence == EdgeConfidence.INFERRED for e in edges)
++    # idempotent: runs per-file AND on the merged graph
++    before = len(graph.edges)
++    assert resolve_storage_pointer_writes(graph) == 0
++    assert len(graph.edges) == before
++
++
++# --------------------------------------------------------------- name resolution
++
++
++def test_bare_name_resolves_to_all_variants(engine: QueryEngine) -> None:
++    """`drain` denotes the impl, the interface declaration, AND the proxy."""
++    res = engine.resolve_name("drain")
++    assert set(res.ids) == {
++        "IVault:IVault.drain",
++        "Vault:Vault.drain",
++        "proxy.unresolved:vault.drain",
++    }
++    assert res.ambiguous
++
++
++def test_qualified_name_is_scoped(engine: QueryEngine) -> None:
++    """`Vault.drain` must NOT widen to the interface's same-named method."""
++    assert engine.resolve_name("Vault.drain").ids == ("Vault:Vault.drain",)
++
++
++def test_exact_node_id_is_not_widened(engine: QueryEngine) -> None:
++    """An explicit id is an instruction, not a search."""
++    res = engine.resolve_name("Vault:Vault.drain")
++    assert res.ids == ("Vault:Vault.drain",)
++    assert res.exact
++
++
++def test_resolution_is_deterministic(tmp_path: Path) -> None:
++    """find_node_id returned the FIRST dict match, so results depended on parse order.
++
++    Rebuilding the same graph must give byte-identical resolution every time.
++    """
++    src = tmp_path / "src"
++    src.mkdir()
++    (src / "IVault.sol").write_text(IVAULT)
++    (src / "Vault.sol").write_text(VAULT)
++    (src / "Router.sol").write_text(ROUTER)
++    results = {
++        QueryEngine.from_directory(str(src), language="solidity").resolve_name("drain").ids
++        for _ in range(5)
++    }
++    assert len(results) == 1
++
++
++def test_unknown_name_resolves_to_nothing(engine: QueryEngine) -> None:
++    res = engine.resolve_name("noSuchFunction")
++    assert not res
++    assert res.ids == ()
++
++
++# --------------------------------------------------------------- honest reporting
++
++
++def test_unknown_name_is_distinguishable_from_unreachable(engine: QueryEngine) -> None:
++    """The single most dangerous conflation: a typo must not read as a safe result."""
++    unknown = engine.entrypoint_paths_report("noSuchFunction")
++    assert unknown["resolved"] is False
++    assert unknown["reachable"] is False
++
++    reached = engine.entrypoint_paths_report("_sweep")
++    assert reached["resolved"] is True
++    assert reached["reachable"] is True
++
++
++def test_verdict_is_not_derived_from_capped_paths(engine: QueryEngine) -> None:
++    """`reachable` must come from ancestor closure, not from the path list.
++
++    ``Router.routeDrain`` reaches the sink in 3 hops. At ``max_depth=1`` that route is
++    invisible, yet the sink IS reachable from it. If the verdict were ``bool(paths)``
++    this would be a false negative -- the same bug in a new costume.
++    """
++    shallow = engine.entrypoint_paths_report("_sweep", max_depth=1)
++    assert shallow["reachable"] is True
++    assert "Router:Router.routeDrain" in shallow["reaching_entrypoints"]
++    assert not any("Router:Router.routeDrain" in p for p in shallow["paths"]), (
++        "a 3-hop route must not appear at max_depth=1"
++    )
++
++    deep = engine.entrypoint_paths_report("_sweep", max_depth=3)
++    assert any("Router:Router.routeDrain" in p for p in deep["paths"]), (
++        "max_depth is in HOPS: a 3-hop path must be visible at max_depth=3"
++    )
++
++
++def test_max_depth_zero_is_rejected_not_silently_unlimited(engine: QueryEngine) -> None:
++    """rustworkx reads cutoff=0 as 'no limit', so 0 must not reach it.
++
++    Left unguarded, ``max_depth=0`` returned MORE paths than ``max_depth=1``.
++    """
++    with pytest.raises(ValueError, match="hops and must be >= 1"):
++        engine.entrypoint_paths_report("_sweep", max_depth=0)
++
++
++def test_paths_beyond_max_depth_flag(engine: QueryEngine) -> None:
++    """reachable=True with paths=[] must be labelled a display limit, not safety."""
++    rep = engine.entrypoint_paths_report("Vault:Vault._sweep", max_depth=1, limit=0)
++    assert rep["reachable"] is True
++    assert rep["paths"] == []
++    assert rep["paths_beyond_max_depth"] is True
++
++
++def test_truncation_is_flagged(engine: QueryEngine) -> None:
++    """A capped path list that looks complete is a silent under-report."""
++    rep = engine.entrypoint_paths_report("_sweep", limit=1)
++    assert len(rep["paths"]) == 1
++    assert rep["paths_truncated"] is True
++
++    full = engine.entrypoint_paths_report("_sweep", limit=None)
++    assert full["paths_truncated"] is False
++    assert len(full["paths"]) > 1
++
++
++def test_reaching_entrypoints_names_the_untrusted_caller(engine: QueryEngine) -> None:
++    """The audit-relevant output: WHICH entrypoints reach the sink."""
++    reaching, _ = core.reaching_entrypoints(engine.store, "_sweep")
++    assert "Router:Router.routeDrain" in reaching
++    assert "Vault:Vault.poke" in reaching
++
++
++# --------------------------------------------------------------- state web
++
++
++def test_state_access_aggregates_over_variants(engine: QueryEngine) -> None:
++    writes = {n["id"] for n in engine.writes_of("_sweep")}
++    assert writes == {"Vault:Vault.total", "Vault:Vault.owner"}
++
++
++def test_state_access_rejects_bad_mode(engine: QueryEngine) -> None:
++    with pytest.raises(ValueError, match="mode must be"):
++        core.state_access(engine.store, "_sweep", mode="mutates")
++
++
++def test_direction_arguments_are_validated(engine: QueryEngine) -> None:
++    with pytest.raises(ValueError, match="direction must be"):
++        core.neighbors(engine.store, "_sweep", direction="sideways")
++    with pytest.raises(ValueError, match="direction must be"):
++        core.closure(engine.store, "_sweep", direction="sideways")
++
++
++# --------------------------------------------------------------- encapsulation
++
++
++def test_public_accessors_replace_private_reach_through(engine: QueryEngine) -> None:
++    """The MCP server used ``qe._store.paths_between``; that had no stability promise."""
++    assert engine.store is not None
++    assert engine.store.graph is not None
++    assert engine.entrypoint_ids()
++    assert engine.paths_between_ids("Vault:Vault.drain", "Vault:Vault._sweep")
++    assert engine.entrypoint_paths_to_id("Vault:Vault._sweep")
+diff --git a/tests/test_solidity_parser.py b/tests/test_solidity_parser.py
+index 9bee8a8..8bd0a67 100644
+--- a/tests/test_solidity_parser.py
++++ b/tests/test_solidity_parser.py
+@@ -309,3 +309,67 @@ contract B {
+                 f.write("not source code")
+             graph = parser.parse_directory(tmpdir)
+         assert len(graph.nodes) == 0
++
++
++STATE_WEB_CODE = """\
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.0;
++
++contract Vault {
++    uint256 public total;
++    mapping(address => uint256) public bal;
++
++    function deposit(uint256 a) external {
++        bal[msg.sender] += a;
++        total = total + a;
++        uint256 scratch = total;
++    }
++}
++"""
++
++
++def _parse_state_web() -> CodeGraph:
++    parser = SolidityParser()
++    with tempfile.NamedTemporaryFile(mode="w", suffix=".sol", delete=False) as f:
++        f.write(STATE_WEB_CODE)
++        f.flush()
++        return parser.parse_file(f.name)
++
++
++class TestSolidityStateWeb:
++    """READS/WRITES edges to contract state variables (syntactic state web)."""
++
++    def test_state_variable_nodes(self) -> None:
++        graph = _parse_state_web()
++        state_vars = {n.id for n in graph.nodes.values() if n.kind == NodeKind.STATE_VARIABLE}
++        assert any(sid.endswith("Vault.total") for sid in state_vars)
++        assert any(sid.endswith("Vault.bal") for sid in state_vars)
++
++    def test_writes(self) -> None:
++        graph = _parse_state_web()
++        writes = {e.target_id.split(".")[-1] for e in graph.edges if e.kind == EdgeKind.WRITES}
++        assert writes == {"total", "bal"}
++
++    def test_reads_include_augmented_and_rhs(self) -> None:
++        graph = _parse_state_web()
++        reads = {e.target_id.split(".")[-1] for e in graph.edges if e.kind == EdgeKind.READS}
++        # `total = total + a` reads total; `bal[..] += a` reads bal.
++        assert "total" in reads
++        assert "bal" in reads
++
++    def test_locals_and_params_excluded(self) -> None:
++        graph = _parse_state_web()
++        targets = {
++            e.target_id.split(".")[-1]
++            for e in graph.edges
++            if e.kind in (EdgeKind.READS, EdgeKind.WRITES)
++        }
++        # `scratch` (local) and `a` (param) are not state variables.
++        assert "scratch" not in targets
++        assert "a" not in targets
++
++    def test_state_edges_are_certain(self) -> None:
++        graph = _parse_state_web()
++        state_edges = [e for e in graph.edges if e.kind in (EdgeKind.READS, EdgeKind.WRITES)]
++        assert state_edges
++        assert all(e.confidence == EdgeConfidence.CERTAIN for e in state_edges)
