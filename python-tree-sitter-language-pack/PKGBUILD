@@ -1,0 +1,197 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Claudia Pellegrino <aur ät cpellegrino.de>
+#
+# Rewritten for upstream 1.x. The 0.x recipe built a setuptools project that
+# cloned its grammars during prepare(); upstream is now a Rust monorepo whose
+# Python distribution is built by maturin from crates/ts-pack-core-py.
+
+pkgname=python-tree-sitter-language-pack
+_gitpkgname=tree-sitter-language-pack
+pkgver=1.15.0
+pkgrel=1
+pkgdesc='Pre-compiled tree-sitter grammars for 371 programming languages'
+arch=('x86_64')
+url='https://github.com/xberg-io/tree-sitter-language-pack'
+license=(
+  '0BSD'
+  'Apache-2.0'
+  'BSD-2-Clause'
+  'BSD-3-Clause'
+  'CC0-1.0'
+  'GPL-3.0-only'
+  'ISC'
+  'MIT'
+  'MIT-0'
+  'Unlicense'
+  'WTFPL'
+)
+depends=(
+  'gcc-libs'
+  'glibc'
+  'python'
+  'python-tree-sitter'
+)
+makedepends=(
+  'maturin'
+  'python-installer'
+  'rust'
+)
+checkdepends=(
+  'python-pytest'
+  'python-pytest-asyncio'
+  'python-pytest-timeout'
+)
+
+# The C grammar objects are linked by rustc, not by the makepkg link step, so
+# GCC's `-flto` bitcode would have to survive a toolchain boundary it is not
+# guaranteed to survive. Cargo already applies (thin) LTO to the Rust half.
+options=('!lto')
+
+source=(
+  "${_gitpkgname}-${pkgver}.tar.gz::${url}/archive/v${pkgver}.tar.gz"
+  "parser-sources-${pkgver}.tar.zst::${url}/releases/download/v${pkgver}/parser-sources-${pkgver}.tar.zst"
+)
+
+# The parser-source bundle is the grammar corpus that `build.rs` would otherwise
+# fetch itself at compile time. Providing it through `source=()` keeps build()
+# offline and puts the corpus under makepkg's integrity check.
+noextract=("parser-sources-${pkgver}.tar.zst")
+
+sha512sums=('0bb192860fb5aad3a7a4a75887b7440a8534bbe5a3de04e7c34d92780256e9c2e03964e4a698207db3a459783838cc4c4447ea9e6c2fa5a635a9b37c435156f0'
+            'f32ba9937a736ce525f152ae638fed2a54d25c6bf700b7b0f1fd8f86e74fe11858f6e097186829d6f467bd00ace903c6e107341817624eaeb95339554966e33f')
+
+# Resolve build tuning from the host toolchain configuration. Everything here is
+# derived, never hard-coded, so the PKGBUILD stays portable while still using
+# whatever the local makepkg.conf was tuned for.
+_tune_build_env() {
+  # makepkg runs prepare() and build() in one shell, so the appends below must
+  # not accumulate across both calls.
+  [[ -n ${_tuned} ]] && return 0
+  _tuned=1
+
+  # Cargo job count. Upstream's checked-in .cargo/config.toml pins `jobs = 4`,
+  # which also caps the `cc` crate's fan-out over ~371 C translation units --
+  # that fan-out, not rustc, is where the wall-clock time is. Env beats config,
+  # so this raises it without patching a generated file.
+  local jobs
+  if [[ ${MAKEFLAGS} =~ -j[[:space:]]*([0-9]+) ]]; then
+    jobs="${BASH_REMATCH[1]}"
+  else
+    jobs="$(nproc)"
+  fi
+  export CARGO_BUILD_JOBS="${jobs}"
+
+  # Mirror the C -march into rustc's -C target-cpu when rustc knows the name.
+  local march
+  if [[ ${CFLAGS} =~ -march=([A-Za-z0-9_.-]+) ]]; then
+    march="${BASH_REMATCH[1]}"
+    if rustc --print target-cpus 2>/dev/null | grep -qE "^[[:space:]]*${march}([[:space:]]|$)"; then
+      export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=${march}"
+    else
+      echo >&2 "==> WARNING: rustc does not know target-cpu '${march}'; leaving RUSTFLAGS alone"
+    fi
+  fi
+
+  # A cdylib containing 371 statically linked grammars is a large final link.
+  if command -v mold >/dev/null; then
+    export RUSTFLAGS="${RUSTFLAGS} -C link-arg=-fuse-ld=mold"
+  fi
+
+  # Upstream's release profile is thin LTO. A host-wide
+  # CARGO_PROFILE_RELEASE_LTO=fat turns the final link of this particular crate
+  # into the build's peak-memory event for no measurable runtime gain, so this
+  # is the one host setting deliberately overridden.
+  export CARGO_PROFILE_RELEASE_LTO=thin
+
+  # rust-toolchain.toml pins channel 1.95 and requests a wasm32 target plus
+  # extra components; honouring it would make rustup reach for the network mid
+  # build. The workspace only needs edition 2024, which the default toolchain
+  # provides.
+  export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
+
+  # Statically link every grammar into the extension module. The alternative
+  # (upstream's default) emits one shared object per grammar and bakes the
+  # absolute OUT_DIR path into the binary, which cannot survive $pkgdir, and
+  # otherwise falls back to downloading grammars into a per-user cache at run
+  # time -- neither is acceptable for a distribution package.
+  export TSLP_LINK_MODE=static
+
+  # With TSLP_LANGUAGES unset, build.rs compiles *no* grammar at all and the
+  # extension module falls back to downloading them at run time. `all` is what
+  # makes the package self-contained.
+  export TSLP_LANGUAGES=all
+}
+
+prepare() {
+  cd "${_gitpkgname}-${pkgver}"
+
+  echo >&2 'Unpacking the vendored grammar corpus'
+  # Only parsers/ -- patches/ and sources/ are already present in the repository
+  # tarball, and the bundle's copies may lag behind it.
+  bsdtar -x -f "${srcdir}/parser-sources-${pkgver}.tar.zst" -C . parsers
+
+  _tune_build_env
+
+  echo >&2 'Vendoring crate dependencies'
+  # No --target: maturin runs `cargo metadata`, which resolves the whole
+  # workspace graph across every platform, so a host-only fetch leaves
+  # cross-platform-only crates (aes, ...) missing under --offline.
+  cargo fetch --locked
+}
+
+build() {
+  cd "${_gitpkgname}-${pkgver}"
+
+  _tune_build_env
+  export CARGO_NET_OFFLINE=true
+
+  echo >&2 "Building wheel (${CARGO_BUILD_JOBS} jobs, TSLP_LINK_MODE=${TSLP_LINK_MODE}, TSLP_LANGUAGES=${TSLP_LANGUAGES})"
+  cd packages/python
+  maturin build \
+    --release \
+    --locked \
+    --offline \
+    --compatibility linux \
+    --interpreter python3 \
+    --out dist
+}
+
+check() {
+  cd "${_gitpkgname}-${pkgver}"
+
+  python -m venv --system-site-packages test-env
+  test-env/bin/python -m installer packages/python/dist/*.whl
+
+  # Run from outside the source tree: packages/python/tree_sitter_language_pack
+  # would shadow the installed package, and its `_native` module only exists in
+  # the wheel.
+  echo >&2 'Running end-to-end tests'
+  # test_download.py exercises the runtime grammar downloader, which this
+  # package deliberately does not use -- every grammar is already linked in.
+  env -C "$(mktemp -d)" \
+    "$(pwd)/test-env/bin/python" -m pytest \
+      --import-mode=append \
+      -p no:cacheprovider \
+      --ignore "$(pwd)/e2e/python/tests/test_download.py" \
+      "$(pwd)/e2e/python/tests"
+}
+
+package() {
+  cd "${_gitpkgname}-${pkgver}"
+
+  echo >&2 'Packaging the wheel'
+  python -I -m installer --destdir="${pkgdir}" packages/python/dist/*.whl
+
+  echo >&2 'Packaging the documentation'
+  install -D -m 644 -t "${pkgdir}/usr/share/doc/${pkgname}" \
+    packages/python/README.md
+
+  echo >&2 'Packaging licenses'
+  install -D -m 644 -t "${pkgdir}/usr/share/licenses/${pkgname}" \
+    LICENSE \
+    ATTRIBUTIONS.md
+  # The grammar corpus ships no per-parser LICENSE files; upstream tracks the
+  # per-grammar terms in this manifest instead.
+  install -D -m 644 -T sources/license_cache.json \
+    "${pkgdir}/usr/share/licenses/${pkgname}/grammar-licenses.json"
+}

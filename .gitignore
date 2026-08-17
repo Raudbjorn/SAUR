@@ -17,6 +17,8 @@
 *.pkg.tar.*
 *.src.tar.*
 /python-installer/python-installer-*.tar.gz
+/python-tree-sitter-language-pack/tree-sitter-language-pack-*.tar.gz
+/python-tree-sitter-language-pack/parser-sources-*.tar.zst
 *.log
 
 # Python build residue
