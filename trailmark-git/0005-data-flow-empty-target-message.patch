@@ -1,0 +1,66 @@
+diff --git a/src/trailmark/diagram.py b/src/trailmark/diagram.py
+index 5452b40..3e51ffe 100644
+--- a/src/trailmark/diagram.py
++++ b/src/trailmark/diagram.py
+@@ -362,6 +362,22 @@ def emit_data_flow(
+     all_path_edges: list[tuple[str, str, str]] = []
+ 
+     targets = _resolve_data_flow_targets(engine, graph, focus, ep_ids)
++    if not targets:
++        # Distinct from "targets exist but nothing reaches them". Without
++        # --focus the targets are complexity hotspots that are not already
++        # entrypoints, so a codebase whose only hotspots *are* its
++        # entrypoints selects nothing and would otherwise be reported as
++        # an unreachability problem it does not have.
++        print(
++            "No data-flow targets: without --focus, targets are complexity "
++            "hotspots that are not themselves entrypoints, and none qualified. "
++            "Pass --focus <node-id> to choose a target explicitly.",
++            file=sys.stderr,
++        )
++        return _empty_diagram(
++            f"flowchart {direction}",
++            "No data flow targets selected",
++        )
+ 
+     for ep_id in ep_ids:
+         for tgt_id in targets:
+diff --git a/tests/test_diagram_script.py b/tests/test_diagram_script.py
+index bfa16b4..0e266fd 100644
+--- a/tests/test_diagram_script.py
++++ b/tests/test_diagram_script.py
+@@ -2,6 +2,8 @@
+ 
+ from __future__ import annotations
+ 
++import pathlib
++
+ import pytest
+ 
+ from trailmark import diagram
+@@ -378,3 +380,25 @@ class TestWarnIfLarge:
+         big = {str(i): i for i in range(150)}
+         diagram._warn_if_large(big)
+         assert "150 nodes exceeds 100" in capsys.readouterr().err
++
++
++def test_data_flow_reports_no_targets_distinctly(
++    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
++) -> None:
++    """A codebase whose only hotspot is its entrypoint has no targets.
++
++    Regression guard: this used to render "No paths from entrypoints to
++    targets", which reads as an unreachability problem rather than an
++    empty target selection.
++    """
++    (tmp_path / "app.ts").write_text(
++        "const app = new Hono();\n"
++        'app.get("/x", onlyHandler);\n'
++        "export function onlyHandler(c: any) { return c; }\n"
++    )
++    engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++    out = diagram.emit_data_flow(engine, None, 3, "TB")
++
++    assert "No data flow targets selected" in out
++    assert "No paths from entrypoints" not in out
++    assert "--focus" in capsys.readouterr().err

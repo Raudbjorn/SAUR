@@ -1,0 +1,226 @@
+diff --git a/README.md b/README.md
+index 05a7264..3b8e023 100644
+--- a/README.md
++++ b/README.md
+@@ -400,7 +400,7 @@ trust = "untrusted_external"
+ 
+ Later entries override earlier ones when two rules tag the same node, so place broad rules first and specific corrections after.
+ 
+-See [docs/entrypoint-patterns.md](docs/entrypoint-patterns.md) for the full reference, including frameworks not yet implemented (Express / Koa / Fastify, Laravel, Cobra, axum, warp, clap, and others) with grep-ready patterns contributors can use to add new detectors.
++See [docs/entrypoint-patterns.md](docs/entrypoint-patterns.md) for the full reference, including frameworks not yet implemented (Laravel, Cobra, axum, warp, clap, and others) with grep-ready patterns contributors can use to add new detectors.
+ 
+ Solidity detection uses parser metadata rather than signature regexes. Interface
+ declarations are excluded, and derived overrides annotate matching base
+diff --git a/docs/entrypoint-patterns.md b/docs/entrypoint-patterns.md
+index 80ba074..6e54f29 100644
+--- a/docs/entrypoint-patterns.md
++++ b/docs/entrypoint-patterns.md
+@@ -184,6 +184,30 @@ Any function called from an `if __name__ == "__main__":` block is a script entry
+ 
+ ## JavaScript / TypeScript
+ 
++> [!NOTE]
++> Express, Koa, Fastify and Hono are all detected by a single call-site
++> scan, since they share the `<router>.<verb>("/path", handler)` shape.
++> The scan records **named** handler references only. An inline callback
++> — `app.get("/x", async (c) => { ... })` — produces no node in the
++> graph, so there is nothing to tag; use `.trailmark/entrypoints.toml`
++> for those routes, or extract the callback into a named function.
++
++### Hono
++
++`app.get/post/put/patch/delete/all("/path", handler)` on a `Hono` instance. Middleware may precede the handler in the same call.
++
++```ts
++const app = new Hono();
++app.get("/health", healthHandler);
++app.post("/seal", requireAuth, sealHandler);
++```
++
++- **Scope:** function (each named handler or middleware referenced)
++- **Kind:** `api` · **Trust:** `untrusted_external` · **Asset:** `high`
++- **Pattern:** `\b[A-Za-z_$][\w$]*\s*\.\s*(?:get|post|put|patch|delete|head|options|all|use)\s*\(\s*["'`][^"'`]*["'`]\s*,` — then take every following argument that is a bare or dotted identifier.
++- **Gotcha:** Hono's idiomatic style is an inline arrow callback, which is not detectable. `app.on(method, path, handler)` takes the method as its first argument and is not matched.
++- **Source:** <https://hono.dev/docs/api/routing>
++
+ ### Express
+ 
+ `app.get/post/put/delete/patch/all/use("/path", handler)` — handler is typically the callback. `app` is any variable of `Express` type.
+diff --git a/src/trailmark/analysis/entrypoints.py b/src/trailmark/analysis/entrypoints.py
+index 8514699..42da6a2 100644
+--- a/src/trailmark/analysis/entrypoints.py
++++ b/src/trailmark/analysis/entrypoints.py
+@@ -15,7 +15,10 @@ Detection layers (later layers override earlier ones):
+      (``@app.task``, ``@shared_task``).
+    - JavaScript / TypeScript: NestJS decorators (``@Get``, ``@Post``,
+      etc.), Next.js route handlers (App Router ``route.ts`` + HTTP-verb
+-     exports, Pages API ``pages/api/**``), AWS Lambda handlers.
++     exports, Pages API ``pages/api/**``), AWS Lambda handlers, and
++     call-site router registrations -- ``app.get("/path", handler)`` as
++     used by Hono, Express, Koa and Fastify. Named handlers only:
++     an inline ``(c) => { ... }`` callback produces no node to tag.
+    - Java: Spring (``@GetMapping``, ``@PostMapping``, ...), JAX-RS
+      (``@GET``, ``@POST``), Kafka ``@KafkaListener``, servlet
+      ``doGet``/``doPost``/... methods.
+@@ -39,8 +42,8 @@ Detection layers (later layers override earlier ones):
+    repository root. Always the authoritative source.
+ 
+ See ``docs/entrypoint-patterns.md`` for the full reference, including
+-frameworks not yet implemented (Express / Koa / Fastify, Laravel,
+-WordPress, Rails, Cobra, axum, warp, clap, etc.).
++frameworks not yet implemented (Laravel, WordPress, Cobra, axum, warp,
++clap, etc.).
+ """
+ 
+ from __future__ import annotations
+@@ -103,6 +106,22 @@ _JS_NEST_DECORATOR = re.compile(
+     r"^\s*@\s*(Get|Post|Put|Delete|Patch|Options|Head|All)\s*\(",
+ )
+ 
++# JS/TS — router registration at a call site:
++#   `app.get("/path", handler)` / `router.post('/x', mw, handler)`
++# Hono, Express, Koa (@koa/router), Fastify and their many clones all
++# share this shape. Requiring a string-literal first argument *and* a
++# following argument is what keeps this from matching `map.get("k")` or
++# `headers.get("x")`, which take a single argument.
++_JS_ROUTER_CALL = re.compile(
++    r"\b[A-Za-z_$][\w$]*\s*\.\s*"
++    r"(?:get|post|put|patch|delete|head|options|all|use)\s*\(\s*"
++    r"[\"'`][^\"'`]*[\"'`]\s*,\s*(?P<rest>[^)]*)",
++)
++
++# A router argument that names an existing function, as opposed to an
++# inline callback. Bare (`handler`) or dotted (`ctrl.handler`).
++_JS_ROUTER_ARG = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
++
+ # Java annotations — Spring MVC / WebFlux
+ _JAVA_SPRING_HANDLER = re.compile(
+     r"^\s*@\s*(Get|Post|Put|Delete|Patch|Request)Mapping\b",
+@@ -536,6 +555,16 @@ def _detect_js_ts(
+                 description="NestJS controller method",
+                 asset_value=AssetValue.HIGH,
+             )
++
++    # Router registrations resolved at the call site, the way Go handlers
++    # are. Checked last so decorator- and path-based conventions win.
++    if unit.name in cache.js_router_handler_names(path):
++        return EntrypointTag(
++            kind=EntrypointKind.API,
++            trust_level=TrustLevel.UNTRUSTED_EXTERNAL,
++            description="JS/TS router handler (Hono/Express/Koa/Fastify)",
++            asset_value=AssetValue.HIGH,
++        )
+     return None
+ 
+ 
+@@ -1169,6 +1198,35 @@ class _SourceCache:
+         self._scan_cache[key] = names
+         return names
+ 
++    def js_router_handler_names(self, path: str) -> set[str]:
++        """Extract JS/TS handler names registered on a router in the file.
++
++        Scans for ``<router>.<verb>("/path", handler)`` as used by Hono,
++        Express, Koa and Fastify. Every argument after the path that is a
++        bare or dotted identifier is recorded, so middleware chains like
++        ``app.get("/x", requireAuth, listUsers)`` contribute both names;
++        the last dotted segment is kept for lookup against Trailmark node
++        names.
++
++        Only *named* handlers are captured. An inline callback --
++        ``app.get("/x", async (c) => { ... })`` -- creates no node in the
++        graph, so there is nothing to tag. This is a real coverage limit,
++        not an oversight.
++        """
++        key = f"js_router::{path}"
++        cached = self._scan_cache.get(key)
++        if cached is not None:
++            return cached
++        names: set[str] = set()
++        for line in self._read(path):
++            for match in _JS_ROUTER_CALL.finditer(line):
++                for argument in match.group("rest").split(","):
++                    candidate = argument.strip()
++                    if _JS_ROUTER_ARG.match(candidate):
++                        names.add(candidate.rsplit(".", 1)[-1])
++        self._scan_cache[key] = names
++        return names
++
+     def ruby_rails_controller_classes(self, path: str) -> set[str]:
+         """Extract class names that inherit from Rails controller bases."""
+         key = f"ruby_rails::{path}"
+diff --git a/tests/test_entrypoints.py b/tests/test_entrypoints.py
+index a5b1ed6..3189591 100644
+--- a/tests/test_entrypoints.py
++++ b/tests/test_entrypoints.py
+@@ -793,6 +793,70 @@ class TestGo:
+         assert any("getUser" in nid for nid in ids), surface
+ 
+ 
++class TestJsRouter:
++    """Call-site route registration shared by Hono, Express, Koa, Fastify."""
++
++    def test_hono_named_handler_detected(self, tmp_path: Path) -> None:
++        (tmp_path / "app.ts").write_text(
++            'import { Hono } from "hono";\n'
++            "\n"
++            "const app = new Hono();\n"
++            'app.get("/health", healthHandler);\n'
++            "\n"
++            "export function healthHandler(c: any) { return c.text('ok'); }\n"
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++        surface = engine.attack_surface()
++        ids = {ep["node_id"] for ep in surface}
++        descriptions = {ep.get("description") or "" for ep in surface}
++        assert any("healthHandler" in nid for nid in ids), surface
++        assert any("JS/TS router handler" in d for d in descriptions), surface
++
++    def test_express_handler_detected(self, tmp_path: Path) -> None:
++        (tmp_path / "server.js").write_text(
++            'const express = require("express");\n'
++            "const app = express();\n"
++            'app.post("/login", loginHandler);\n'
++            "\n"
++            "function loginHandler(req, res) { return res.end(); }\n"
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="javascript")
++        ids = {ep["node_id"] for ep in engine.attack_surface()}
++        assert any("loginHandler" in nid for nid in ids), ids
++
++    def test_middleware_chain_tags_every_named_argument(self, tmp_path: Path) -> None:
++        (tmp_path / "app.ts").write_text(
++            "const app = new Hono();\n"
++            'app.get("/users", requireAuth, listUsers);\n'
++            "\n"
++            "export function requireAuth(c: any) { return c; }\n"
++            "export function listUsers(c: any) { return c; }\n"
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++        ids = {ep["node_id"] for ep in engine.attack_surface()}
++        assert any("requireAuth" in nid for nid in ids), ids
++        assert any("listUsers" in nid for nid in ids), ids
++
++    def test_single_argument_get_is_not_a_route(self, tmp_path: Path) -> None:
++        """`map.get("key")` must not tag a same-named function."""
++        (tmp_path / "app.ts").write_text(
++            "const cache = new Map();\n"
++            "export function key(c: any) { return c; }\n"
++            'const value = cache.get("key");\n'
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++        ids = {ep["node_id"] for ep in engine.attack_surface()}
++        assert not any("key" in nid for nid in ids), ids
++
++    def test_inline_arrow_callback_is_not_detected(self, tmp_path: Path) -> None:
++        """Documents a known limit: inline callbacks create no node to tag."""
++        (tmp_path / "app.ts").write_text(
++            'const app = new Hono();\napp.get("/x", async (c) => { return c.text("hi"); });\n'
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++        assert engine.attack_surface() == []
++
++
+ class TestRuby:
+     def test_rails_controller_action_detected(self, tmp_path: Path) -> None:
+         (tmp_path / "users_controller.rb").write_text(

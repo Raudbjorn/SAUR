@@ -13,7 +13,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`python-installer`](python-installer/) | Temporary 1.0.1 bridge required to build AUR `python-rapidocr` | Remove after configured repositories ship 1.0.1 or newer |
 | [`python-tree-sitter025`](python-tree-sitter025/) | `python-tree-sitter` pinned to 0.25.x; 0.26.0 faults on large Solidity inputs | Remove once 0.26.1 or newer passes the reproducer |
 | [`python-tree-sitter-language-pack`](python-tree-sitter-language-pack/) | 371 tree-sitter grammars linked into the extension module, with no run-time downloads | Rewritten for upstream 1.x; two upstream grammars are known broken |
-| [`trailmark-git`](trailmark-git/) | Trailmark source-graph parser at upstream `f7e19d3`, plus two unmerged fork patches | Buildable with `python-tree-sitter025` and AUR dependencies |
+| [`trailmark-git`](trailmark-git/) | Trailmark source-graph parser at upstream `f7e19d3`, plus fork and downstream patches | Buildable with `python-tree-sitter025` and AUR dependencies |
 
 ## Repository layout
 
@@ -40,7 +40,7 @@ SAUR/
 │   └── README.md            # Link mode, host tuning, known upstream defects
 └── trailmark-git/
     ├── .SRCINFO             # Generated AUR metadata
-    ├── *.patch              # Unmerged fork work, applied in prepare()
+    ├── *.patch              # Fork + downstream patches, applied in prepare()
     ├── PKGBUILD             # Package recipe
     └── README.md            # Patch provenance and host-tuning caveats
 ```
