@@ -1,0 +1,76 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+
+# Why this package exists
+# -----------------------
+# The AUR ships python-tree-sitter 0.26.0. Under 0.26.0 the Solidity parser in
+# trailmark faults when a contract carries roughly 300 or more functions --
+# observed both mid-traversal (SIGSEGV inside the C binding, reached via
+# node.text) and, at the low end of the range, as a fault during interpreter
+# finalization after a successful parse. Reproduced on unpatched upstream
+# trailmark f7e19d3, so it is not specific to any downstream patch.
+#
+# 0.26.0 is currently the only 0.26.x release, so there is no point release to
+# move to. tree-sitter 0.25.2 does not exhibit the fault: trailmark's full
+# suite is 1245 passed / 0 failed against it with
+# python-tree-sitter-language-pack 1.15.0.
+#
+# This matches upstream trailmark's own uv.lock, which pins tree-sitter
+# ~=0.25.0 even though pyproject.toml nominally allows <0.27.
+#
+# Named with a suffix and using provides/conflicts rather than a same-pkgname
+# downgrade, so that `pacman -Syu` does not silently pull 0.26.0 back in.
+# The only reverse dependency observed is
+# python-tree-sitter-language-pack, which requires tree-sitter>=0.23 and is
+# therefore satisfied.
+#
+# Removal condition: drop this recipe once a python-tree-sitter 0.26.1 or
+# newer lands and the large-Solidity reproducer passes against it.
+
+pkgname=python-tree-sitter025
+_pypiname='tree-sitter'
+pkgver=0.25.2
+pkgrel=1
+pkgdesc='Python bindings for tree-sitter, pinned to the 0.25.x series'
+arch=('x86_64')
+url='https://github.com/tree-sitter/py-tree-sitter'
+license=('MIT')
+options=('!debug')
+depends=(
+  'glibc'
+  'python'
+)
+makedepends=(
+  'python-build'
+  'python-installer'
+  'python-setuptools'
+  'python-wheel'
+)
+provides=("python-tree-sitter=$pkgver")
+conflicts=('python-tree-sitter')
+source=("https://files.pythonhosted.org/packages/source/${_pypiname:0:1}/$_pypiname/$_pypiname-$pkgver.tar.gz")
+sha256sums=('fe43c158555da46723b28b52e058ad444195afd1db3ca7720c59a254544e9c20')
+
+build() {
+  cd "$_pypiname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$_pypiname-$pkgver"
+  # The sdist ships no test suite; assert the built extension imports and that
+  # the Parser and Language types are reachable instead.
+  local _site
+  _site="$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+  python -m installer --destdir="$srcdir/checkroot" dist/*.whl
+  PYTHONPATH="$srcdir/checkroot$_site" python -c '
+import tree_sitter
+from tree_sitter import Language, Parser
+print("tree_sitter import OK:", tree_sitter.__file__)
+'
+}
+
+package() {
+  cd "$_pypiname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
