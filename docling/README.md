@@ -48,7 +48,9 @@ are restored as versioned conflicts — upstream caps `transformers <6.0.0`
 ```bash
 conflicts=(
   'python-transformers=5.13.0'
+  'python-transformers<4.42.0'
   'python-transformers>=6.0.0'
+  'python-websockets<14.0'
   'python-websockets>=17.0'
 )
 ```

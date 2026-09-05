@@ -31,6 +31,7 @@ depends=(
 # provide, so it constrains only a real versioned provider.
 conflicts=(
   'python-transformers=5.13.0'
+  'python-transformers<4.42.0'
   'python-transformers>=6.0.0'
 )
 makedepends=(
@@ -43,7 +44,15 @@ checkdepends=(
   'python-pytest'
   'python-opencv>=4.6.0'
 )
-optdepends=('python-opencv>=4.6.0: legacy TableFormer image preprocessing')
+optdepends=(
+  # Upstream tests opencv-python only in >=4.6.0.66,<5.0.0.0. Written as
+  # '<5', not as a literal transliteration of that bound: PEP 440 treats
+  # 5.0.0 and 5.0.0.0 as equal, but pacman's vercmp ranks 5.0.0 BELOW
+  # 5.0.0.0, so '<5.0.0.0' would admit the very 5.0.0 upstream excludes.
+  # Arch's python-opencv is 5.x and no packaged provider of this name is in
+  # range, so this reports unsatisfied rather than implying untested support.
+  'python-opencv<5: legacy TableFormer image preprocessing'
+)
 source=("${_pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 b2sums=('e4e1e743e7178e5474d1dcfd2c46d01b0a6404b4c54449730ca46f24ca4147fd1f13b748c83c97fd0783378b5ee775bd2ed252406d4ac464833f6bd808260d53')
 
