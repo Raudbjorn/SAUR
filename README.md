@@ -11,6 +11,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | --- | --- | --- |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
 | [`python-installer`](python-installer/) | Temporary 1.0.1 bridge required to build AUR `python-rapidocr` | Remove after configured repositories ship 1.0.1 or newer |
+| [`python-tree-sitter-language-pack`](python-tree-sitter-language-pack/) | 371 tree-sitter grammars linked into the extension module, with no run-time downloads | Rewritten for upstream 1.x; two upstream grammars are known broken |
 
 ## Repository layout
 
@@ -23,10 +24,14 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Package recipe
 │   └── README.md            # Package-specific notes
-└── python-installer/
+├── python-installer/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Temporary repository-version bridge
+│   └── README.md            # Removal condition and build notes
+└── python-tree-sitter-language-pack/
     ├── .SRCINFO             # Generated AUR metadata
-    ├── PKGBUILD             # Temporary repository-version bridge
-    └── README.md            # Removal condition and build notes
+    ├── PKGBUILD             # Static-grammar, offline build of upstream 1.x
+    └── README.md            # Link mode, host tuning, known upstream defects
 
 Upstream source checkouts used during package research are deliberately ignored. `makepkg` obtains its own source under the package's `src/` directory.
 
