@@ -30,11 +30,12 @@ rather than a same-`pkgname` downgrade, so that `pacman -Syu` cannot silently
 pull 0.26.0 back in.
 
 > [!WARNING]
-> This replaces `python-tree-sitter` system-wide, for the benefit of one
-> consumer. The only reverse dependency observed was
-> `python-tree-sitter-language-pack`, which requires `tree-sitter>=0.23` and is
-> therefore satisfied. Check `pactree -r python-tree-sitter` on your own host
-> before installing.
+> This replaces `python-tree-sitter` system-wide. Reverse dependencies observed
+> in this repository: `trailmark-git` (the original motivation for this
+> package) and `python-tree-sitter-language-pack`, which requires
+> `tree-sitter>=0.23` and is therefore satisfied. This list is not necessarily
+> exhaustive outside this repository -- check `pactree -r python-tree-sitter`
+> on your own host before installing.
 
 ## Build
 

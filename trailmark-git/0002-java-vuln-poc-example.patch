@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..81de4ee
 --- /dev/null
 +++ b/examples/java-vuln-poc/README.md
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,185 @@
 +# Java 3rd-Party Library Vulnerability PoC
 +
 +This example demonstrates how to use **Trailmark** to find and remediate
@@ -112,15 +112,19 @@ index 0000000..81de4ee
 +────────────────────────────────────────────────────────────────────────
 +  Phase 2 — Match imported packages against CVE database
 +────────────────────────────────────────────────────────────────────────
-+  Detected import prefixes: ['java', 'org', 'com', 'springframework']
++  Detected Java imports (7):
++    com.fasterxml.jackson.databind
++    org.apache.commons.text
++    org.apache.logging.log4j
++    ...
 +
 +  ⚠️  6 CVE(s) matched:
 +
 +  🔴 [CRITICAL] CVE-2021-44228 — Log4Shell
-+       Matched package prefix : org
-+       Affects                : 2.0-beta9 to 2.14.1
-+       Fixed in               : 2.17.1
-+       CVSS score             : 10.0
++       Matched import             : org.apache.logging.log4j
++       Affects                    : 2.0-beta9 to 2.14.1
++       Fixed in                   : 2.17.1
++       CVSS score                 : 10.0
 +  ...
 +
 +────────────────────────────────────────────────────────────────────────
@@ -145,7 +149,7 @@ index 0000000..81de4ee
 +  Summary: 3 CVE(s) with reachable call paths (7 total path(s) from HTTP entrypoints)
 +
 +🔴 CVE-2021-44228 — Log4Shell  [CRITICAL  CVSS 10.0]
-+   Package   : org
++   Import    : org.apache.logging.log4j
 +   Affects   : 2.0-beta9 to 2.14.1
 +   Fixed in  : 2.17.1
 +   Fix       : Upgrade log4j-core to 2.17.1 or later. ...
@@ -154,7 +158,7 @@ index 0000000..81de4ee
 +
 +## Remediation guidance
 +
-+Each vulnerability has a specific fix reflected in `remediated-app/pom.xml`:
++Each vulnerability has a specific fix reflected in `remediated-app/pom.xml.example`:
 +
 +| Library | Vulnerable | Patched |
 +|---------|-----------|---------|
@@ -287,7 +291,7 @@ index 0000000..9006452
 +        for prefix, cves in cve_db.items():
 +            if prefix == "_comment":
 +                continue
-+            if import_path.startswith(prefix):
++            if import_path == prefix or import_path.startswith(prefix + "."):
 +                for cve in cves:
 +                    if cve["cve"] in seen_cves:
 +                        continue

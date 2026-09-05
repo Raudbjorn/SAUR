@@ -39,7 +39,7 @@ index 80ba074..6e54f29 100644
 +
 +- **Scope:** function (each named handler or middleware referenced)
 +- **Kind:** `api` · **Trust:** `untrusted_external` · **Asset:** `high`
-+- **Pattern:** `\b[A-Za-z_$][\w$]*\s*\.\s*(?:get|post|put|patch|delete|head|options|all|use)\s*\(\s*["'`][^"'`]*["'`]\s*,` — then take every following argument that is a bare or dotted identifier.
++- **Pattern:** ``\b[A-Za-z_$][\w$]*\s*\.\s*(?:get|post|put|patch|delete|head|options|all|use)\s*\(\s*["'`](?:/[^"'`]*|\*)["'`]\s*,`` — then take every following argument that is a bare or dotted identifier.
 +- **Gotcha:** Hono's idiomatic style is an inline arrow callback, which is not detectable. `app.on(method, path, handler)` takes the method as its first argument and is not matched.
 +- **Source:** <https://hono.dev/docs/api/routing>
 +
@@ -73,7 +73,7 @@ index 8514699..42da6a2 100644
  """
  
  from __future__ import annotations
-@@ -103,6 +106,22 @@ _JS_NEST_DECORATOR = re.compile(
+@@ -103,6 +106,32 @@ _JS_NEST_DECORATOR = re.compile(
      r"^\s*@\s*(Get|Post|Put|Delete|Patch|Options|Head|All)\s*\(",
  )
  
@@ -82,28 +82,109 @@ index 8514699..42da6a2 100644
 +# Hono, Express, Koa (@koa/router), Fastify and their many clones all
 +# share this shape. Requiring a string-literal first argument *and* a
 +# following argument is what keeps this from matching `map.get("k")` or
-+# `headers.get("x")`, which take a single argument.
++# `headers.get("x")`, which take a single argument. The path literal must
++# start with `/` or be the bare wildcard `*`, so a non-route accessor like
++# `config.get("port", defaultPort)` is never mistaken for a route. `rest`
++# tolerates ONE level of nested parens so a middleware factory call ahead
++# of the real handler -- `app.get("/x", cors(), handler)` -- doesn't
++# truncate the match at `cors()`'s own closing paren and drop `handler`.
 +_JS_ROUTER_CALL = re.compile(
 +    r"\b[A-Za-z_$][\w$]*\s*\.\s*"
 +    r"(?:get|post|put|patch|delete|head|options|all|use)\s*\(\s*"
-+    r"[\"'`][^\"'`]*[\"'`]\s*,\s*(?P<rest>[^)]*)",
++    r"[\"'`](?:/[^\"'`]*|\*)[\"'`]\s*,\s*(?P<rest>(?:[^()]|\([^()]*\))*)",
 +)
 +
 +# A router argument that names an existing function, as opposed to an
 +# inline callback. Bare (`handler`) or dotted (`ctrl.handler`).
 +_JS_ROUTER_ARG = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
 +
++# File extensions _detect_for_unit routes to _detect_js_ts. Shared with
++# _detect_framework_entrypoints, which needs the same set to build the
++# project-wide router-handler-name index (see js_router_project_names).
++_JS_TS_EXTENSIONS = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
++
  # Java annotations — Spring MVC / WebFlux
  _JAVA_SPRING_HANDLER = re.compile(
      r"^\s*@\s*(Get|Post|Put|Delete|Patch|Request)Mapping\b",
-@@ -536,6 +555,16 @@ def _detect_js_ts(
+@@ -277,5 +306,14 @@ def _detect_framework_entrypoints(graph: CodeGraph) -> dict[str, EntrypointTag]:
+     cache = _SourceCache()
+     result: dict[str, EntrypointTag] = {}
++    # Every JS/TS file in the project, not just the one _detect_for_unit is
++    # about to visit: a handler and the route that registers it commonly
++    # live in different files (see js_router_project_names), so the lookup
++    # set has to be built from the whole graph up front.
++    js_ts_paths = frozenset(
++        unit.location.file_path
++        for unit in graph.nodes.values()
++        if unit.location.file_path and unit.location.file_path.endswith(_JS_TS_EXTENSIONS)
++    )
+     for node_id, unit in graph.nodes.items():
+         if unit.kind.value not in {"function", "method"}:
+             continue
+@@ -283,7 +321,7 @@ def _detect_framework_entrypoints(graph: CodeGraph) -> dict[str, EntrypointTag]:
+         if not path:
+             continue
+ 
+-        tag = _detect_for_unit(cache, unit, path)
++        tag = _detect_for_unit(cache, unit, path, js_ts_paths)
+         if tag is not None:
+             result[node_id] = tag
+     _annotate_overridden_solidity_entrypoints(graph, result)
+@@ -294,6 +332,7 @@ def _detect_for_unit(
+     cache: _SourceCache,
+     unit: CodeUnit,
+     path: str,
++    js_ts_paths: frozenset[str] = frozenset(),
+ ) -> EntrypointTag | None:
+     if path.endswith(".py"):
+         return _detect_python(cache, unit, path)
+@@ -301,8 +340,8 @@ def _detect_for_unit(
+         return _detect_rust(cache, unit, path)
+     if path.endswith(".sol"):
+         return _detect_solidity(cache, unit, path)
+-    if path.endswith((".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")):
+-        return _detect_js_ts(cache, unit, path)
++    if path.endswith(_JS_TS_EXTENSIONS):
++        return _detect_js_ts(cache, unit, path, js_ts_paths)
+     if path.endswith(".java"):
+         return _detect_java(cache, unit, path)
+     if path.endswith(".cs"):
+@@ -503,14 +542,15 @@ def _annotate_overridden_solidity_entrypoints(graph: CodeGraph, result: dict[st
+     existing.add(derived_method)
+     attributes["solidity_overridden_by"] = ",".join(sorted(existing))
+     graph.nodes[base_method] = dataclasses.replace(unit, attributes=tuple(attributes.items()))
+ 
+ 
+-def _detect_js_ts(
+-    cache: _SourceCache,
+-    unit: CodeUnit,
+-    path: str,
+-) -> EntrypointTag | None:
++def _detect_js_ts(
++    cache: _SourceCache,
++    unit: CodeUnit,
++    path: str,
++    js_ts_paths: frozenset[str] = frozenset(),
++) -> EntrypointTag | None:
+     # File-path conventions first (Next.js).
+     nextjs_tag = _detect_nextjs_route(unit, path)
+     if nextjs_tag is not None:
+         return nextjs_tag
+@@ -536,6 +576,23 @@ def _detect_js_ts(
                  description="NestJS controller method",
                  asset_value=AssetValue.HIGH,
              )
 +
 +    # Router registrations resolved at the call site, the way Go handlers
 +    # are. Checked last so decorator- and path-based conventions win.
-+    if unit.name in cache.js_router_handler_names(path):
++    #
++    # Project-wide, not just this unit's own file: a route registration and
++    # the handler it names commonly live in different files (a routes
++    # module and a controller module -- the usual Express/Hono layout).
++    # Looking the name up only in this file meant a handler was tagged
++    # only when its own file ALSO happened to register a route, so most
++    # real routers looked empty.
++    if unit.name in cache.js_router_project_names(js_ts_paths):
 +        return EntrypointTag(
 +            kind=EntrypointKind.API,
 +            trust_level=TrustLevel.UNTRUSTED_EXTERNAL,
@@ -113,7 +194,7 @@ index 8514699..42da6a2 100644
      return None
  
  
-@@ -1169,6 +1198,35 @@ class _SourceCache:
+@@ -1169,6 +1226,52 @@ class _SourceCache:
          self._scan_cache[key] = names
          return names
  
@@ -146,6 +227,23 @@ index 8514699..42da6a2 100644
 +        self._scan_cache[key] = names
 +        return names
 +
++    def js_router_project_names(self, paths: frozenset[str]) -> set[str]:
++        """Union of ``js_router_handler_names`` across every JS/TS file given.
++
++        Route registration and the handler it names commonly live in
++        different files -- a routes module and a controller module, the
++        usual Express/Hono layout. Scoping the lookup to a single file, as
++        ``js_router_handler_names`` does alone, tags a handler only when
++        its own file ALSO happens to register a route, so most real
++        routers looked empty. Cheap to call repeatedly: each file's own
++        scan is memoized in ``_scan_cache``, so this only pays for the
++        set union.
++        """
++        names: set[str] = set()
++        for path in paths:
++            names |= self.js_router_handler_names(path)
++        return names
++
      def ruby_rails_controller_classes(self, path: str) -> set[str]:
          """Extract class names that inherit from Rails controller bases."""
          key = f"ruby_rails::{path}"
@@ -153,7 +251,7 @@ diff --git a/tests/test_entrypoints.py b/tests/test_entrypoints.py
 index a5b1ed6..3189591 100644
 --- a/tests/test_entrypoints.py
 +++ b/tests/test_entrypoints.py
-@@ -793,6 +793,70 @@ class TestGo:
+@@ -793,6 +793,111 @@ class TestGo:
          assert any("getUser" in nid for nid in ids), surface
  
  
@@ -219,6 +317,47 @@ index a5b1ed6..3189591 100644
 +        )
 +        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
 +        assert engine.attack_surface() == []
++
++    def test_handler_defined_in_a_different_file_is_detected(self, tmp_path: Path) -> None:
++        """The usual layout: routes.ts registers, controller.ts defines."""
++        (tmp_path / "routes.ts").write_text(
++            'import { Hono } from "hono";\n'
++            'import { getUser } from "./controller";\n'
++            "\n"
++            "const app = new Hono();\n"
++            'app.get("/users/:id", getUser);\n'
++        )
++        (tmp_path / "controller.ts").write_text(
++            "export function getUser(c: any) { return c.text('ok'); }\n"
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++        surface = engine.attack_surface()
++        ids = {ep["node_id"] for ep in surface}
++        assert any("getUser" in nid for nid in ids), surface
++
++    def test_factory_call_before_handler_does_not_truncate_the_match(
++        self, tmp_path: Path
++    ) -> None:
++        """`cors()`'s own closing paren must not end the argument scan early."""
++        (tmp_path / "app.ts").write_text(
++            'const app = new Hono();\napp.get("/x", cors(), listUsers);\n'
++            "\n"
++            "export function listUsers(c: any) { return c; }\n"
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++        ids = {ep["node_id"] for ep in engine.attack_surface()}
++        assert any("listUsers" in nid for nid in ids), ids
++
++    def test_non_route_accessor_is_not_a_route(self, tmp_path: Path) -> None:
++        """`config.get("port", defaultPort)` must not tag `defaultPort`."""
++        (tmp_path / "app.ts").write_text(
++            "const config = new Map();\n"
++            'export function defaultPort(c: any) { return c; }\n'
++            'config.get("port", defaultPort);\n'
++        )
++        engine = QueryEngine.from_directory(str(tmp_path), language="typescript")
++        ids = {ep["node_id"] for ep in engine.attack_surface()}
++        assert not any("defaultPort" in nid for nid in ids), ids
 +
 +
  class TestRuby:

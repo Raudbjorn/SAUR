@@ -19,9 +19,12 @@
 #
 # Named with a suffix and using provides/conflicts rather than a same-pkgname
 # downgrade, so that `pacman -Syu` does not silently pull 0.26.0 back in.
-# The only reverse dependency observed is
-# python-tree-sitter-language-pack, which requires tree-sitter>=0.23 and is
-# therefore satisfied.
+# Reverse dependencies observed in this repository: trailmark-git (the
+# original motivation for this package; depends on python-tree-sitter>=0.25
+# <0.26) and python-tree-sitter-language-pack, which requires tree-sitter>=0.23
+# and is therefore satisfied. This is not necessarily exhaustive outside this
+# repository -- check `pactree -r python-tree-sitter` on your own host before
+# installing.
 #
 # Removal condition: drop this recipe once a python-tree-sitter 0.26.1 or
 # newer lands and the large-Solidity reproducer passes against it.
@@ -52,6 +55,7 @@ sha256sums=('fe43c158555da46723b28b52e058ad444195afd1db3ca7720c59a254544e9c20')
 
 build() {
   cd "$_pypiname-$pkgver"
+  rm -rf dist
   python -m build --wheel --no-isolation
 }
 
@@ -59,10 +63,13 @@ check() {
   cd "$_pypiname-$pkgver"
   # The sdist ships no test suite; assert the built extension imports and that
   # the Parser and Language types are reachable instead.
-  local _site
+  local _site _checkroot
   _site="$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-  python -m installer --destdir="$srcdir/checkroot" dist/*.whl
-  PYTHONPATH="$srcdir/checkroot$_site" python -c '
+  # Use a throwaway directory under $srcdir for the test install to avoid
+  # reusing or accumulating files across repeated builds.
+  _checkroot="$(mktemp -d "$srcdir/checkroot.XXXXXX")"
+  python -m installer --destdir="$_checkroot" dist/*.whl
+  PYTHONPATH="$_checkroot$_site" python -c '
 import tree_sitter
 from tree_sitter import Language, Parser
 print("tree_sitter import OK:", tree_sitter.__file__)

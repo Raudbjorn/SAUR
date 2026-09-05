@@ -40,7 +40,7 @@ new file mode 100644
 index 0000000..a1a62ce
 --- /dev/null
 +++ b/src/trailmark/analysis/inheritance.py
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,214 @@
 +"""Resolve inheritance, and attribute state accessed through it.
 +
 +WHY THIS MODULE EXISTS
@@ -114,6 +114,11 @@ index 0000000..a1a62ce
 +    surfaces state and functions that MIGHT be inherited, whereas dropping the edge
 +    guarantees they are missed.
 +
++    The stale edge this repairs is itself removed once resolution runs: a target that
++    is not in ``graph.nodes`` is not a valid edge in this graph model, and leaving it in
++    place produces a ghost base alongside the repaired link for any consumer that does
++    not itself filter on ``target_id in graph.nodes``.
++
 +    Idempotent. Returns the number of edges added.
 +    """
 +    by_name: dict[str, list[str]] = {}
@@ -123,9 +128,11 @@ index 0000000..a1a62ce
 +
 +    existing = {(e.source_id, e.target_id) for e in graph.edges if e.kind == EdgeKind.INHERITS}
 +    new_edges: list[CodeEdge] = []
++    dangling_ids: set[int] = set()
 +    for edge in list(graph.edges):
 +        if edge.kind != EdgeKind.INHERITS or edge.target_id in graph.nodes:
 +            continue
++        dangling_ids.add(id(edge))
 +        for candidate in sorted(by_name.get(_bare(edge.target_id), ())):
 +            if candidate == edge.source_id or (edge.source_id, candidate) in existing:
 +                continue
@@ -142,6 +149,8 @@ index 0000000..a1a62ce
 +                    ),
 +                )
 +            )
++    if dangling_ids:
++        graph.edges[:] = [e for e in graph.edges if id(e) not in dangling_ids]
 +    graph.edges.extend(new_edges)
 +    return len(new_edges)
 +
@@ -929,7 +938,7 @@ index dc652b2..9c1b992 100644
  def _extract_single_param(
      param: Node,
      params: list[Parameter],
-@@ -447,6 +634,270 @@ def _resolve_call_target(
+@@ -447,6 +634,279 @@ def _resolve_call_target(
      return call_name
  
  
@@ -1123,6 +1132,15 @@ index dc652b2..9c1b992 100644
 +            for child in node.children:
 +                walk(child)
 +            return
++        if t == "delete_expression":
++            # `delete x;` resets state to its default value -- a write, not a read of
++            # the prior value. Left to the generic recursion below, the target fell
++            # through to the bare `identifier` case and was recorded as a READ, so
++            # writer sets (and inherited-state WRITES edges) silently missed it.
++            target = node.child_by_field_name("argument")
++            for base in _lhs_identifiers(target):
++                writes[base] = target
++            return
 +        if t == "identifier":
 +            reads.setdefault(node_text(node), node)
 +            return
@@ -1212,7 +1230,7 @@ index e228762..753a537 100644
  from trailmark.storage.graph_store import GraphStore
  
  
-@@ -29,11 +30,57 @@ def detect_languages(path: str) -> list[str]:
+@@ -29,11 +30,67 @@ def detect_languages(path: str) -> list[str]:
  
  
  class QueryEngine:
@@ -1257,21 +1275,31 @@ index e228762..753a537 100644
 +        dst_id: str,
 +        max_depth: int = 20,
 +    ) -> list[list[str]]:
-+        """All call paths between two explicit node IDs (no name resolution)."""
-+        return self._store.paths_between(src_id, dst_id, max_depth)
++        """All call paths between two explicit node IDs (no name resolution).
++
++        ``max_depth`` is in HOPS, same as every other traversal method on this class --
++        converted via :func:`core._cutoff` before reaching the store, which expects a
++        node-count cutoff. Passing ``max_depth`` straight through under-reported paths
++        one hop shorter than intended and let ``max_depth=0`` mean unlimited instead of
++        being rejected.
++        """
++        return self._store.paths_between(src_id, dst_id, core._cutoff(max_depth))
 +
 +    def entrypoint_paths_to_id(
 +        self,
 +        node_id: str,
 +        max_depth: int = 20,
 +    ) -> list[list[str]]:
-+        """Entrypoint paths to an explicit node ID (no name resolution)."""
-+        return self._store.entrypoint_paths_to(node_id, max_depth=max_depth)
++        """Entrypoint paths to an explicit node ID (no name resolution).
++
++        Same hop-to-cutoff conversion as :meth:`paths_between_ids`; see there.
++        """
++        return self._store.entrypoint_paths_to(node_id, max_depth=core._cutoff(max_depth))
 +
      @classmethod
      def from_directory(
          cls,
-@@ -73,21 +120,37 @@ class QueryEngine:
+@@ -73,21 +130,37 @@ class QueryEngine:
          See ``trailmark.analysis.diff.compute_diff`` for the returned
          schema.
          """
@@ -1320,7 +1348,7 @@ index e228762..753a537 100644
  
      def ancestors_of(self, name: str) -> list[dict[str, Any]]:
          """Find every function/method that can transitively reach ``name``.
-@@ -96,44 +159,25 @@ class QueryEngine:
+@@ -96,44 +169,25 @@ class QueryEngine:
          sink, this surfaces every function that could eventually call it,
          directly or indirectly. Useful for upward slicing during audits.
          """
@@ -1372,7 +1400,7 @@ index e228762..753a537 100644
  
      def connect_subgraphs(
          self,
-@@ -159,14 +203,58 @@ class QueryEngine:
+@@ -159,14 +213,58 @@ class QueryEngine:
      ) -> list[list[str]]:
          """Find call paths from any entrypoint to ``name``.
  
@@ -1438,7 +1466,7 @@ index e228762..753a537 100644
  
      def nodes_with_annotation(
          self,
-@@ -187,7 +275,7 @@ class QueryEngine:
+@@ -187,7 +285,7 @@ class QueryEngine:
          (``TypeRef.name``) — modules/generics are ignored.
          """
          result: list[dict[str, Any]] = []
@@ -1447,7 +1475,7 @@ index e228762..753a537 100644
              for exc in unit.exception_types:
                  if exc.name == exception_name:
                      result.append(_unit_to_dict(unit))
-@@ -271,7 +359,7 @@ class QueryEngine:
+@@ -271,7 +369,7 @@ class QueryEngine:
      def summary(self) -> dict[str, Any]:
          """Return a summary of the code graph."""
          store = self._store
@@ -1456,7 +1484,7 @@ index e228762..753a537 100644
          funcs = [n for n in graph.nodes.values() if n.kind.value in ("function", "method")]
          call_edges = [e for e in graph.edges if e.kind.value == "calls"]
          return {
-@@ -326,7 +414,7 @@ class QueryEngine:
+@@ -326,7 +424,7 @@ class QueryEngine:
          finding_kinds = {AnnotationKind.FINDING, AnnotationKind.AUDIT_NOTE}
          if kind is not None:
              finding_kinds = {kind}
@@ -1465,7 +1493,7 @@ index e228762..753a537 100644
          results: list[dict[str, Any]] = []
          for node_id, anns in graph.annotations.items():
              matching = [a for a in anns if a.kind in finding_kinds]
-@@ -340,10 +428,19 @@ class QueryEngine:
+@@ -340,10 +438,19 @@ class QueryEngine:
              results.append(entry)
          return results
  
@@ -1486,7 +1514,7 @@ index e228762..753a537 100644
          return [_unit_to_dict(graph.nodes[nid]) for nid in sorted(node_ids) if nid in graph.nodes]
  
      def subgraph_edges(
-@@ -365,7 +462,7 @@ class QueryEngine:
+@@ -365,7 +472,7 @@ class QueryEngine:
          node_id = self._store.find_node_id(name)
          if node_id is None:
              return []
@@ -1495,7 +1523,7 @@ index e228762..753a537 100644
          unit = graph.nodes.get(node_id)
          if unit is None:
              return []
-@@ -376,7 +473,7 @@ class QueryEngine:
+@@ -376,7 +483,7 @@ class QueryEngine:
          node_id = self._store.find_node_id(name)
          if node_id is None:
              return []
@@ -1504,7 +1532,7 @@ index e228762..753a537 100644
          unit = graph.nodes.get(node_id)
          if unit is None:
              return []
-@@ -385,7 +482,7 @@ class QueryEngine:
+@@ -385,7 +492,7 @@ class QueryEngine:
  
      def to_json(self, indent: int = 2) -> str:
          """Serialize the full graph to JSON."""

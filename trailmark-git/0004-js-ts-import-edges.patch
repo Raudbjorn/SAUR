@@ -209,7 +209,7 @@ diff --git a/tests/test_common_parser.py b/tests/test_common_parser.py
 index 49af2a6..99679e7 100644
 --- a/tests/test_common_parser.py
 +++ b/tests/test_common_parser.py
-@@ -319,3 +319,90 @@ def test_cross_file_linker_keeps_ambiguous_cross_file_calls_unresolved(
+@@ -319,3 +319,100 @@ def test_cross_file_linker_keeps_ambiguous_cross_file_calls_unresolved(
      assert len(call_edges) == 1
      assert call_edges[0].target_id == "proxy.unresolved:ambiguous_caller:shared_name"
      assert call_edges[0].confidence == EdgeConfidence.UNCERTAIN
@@ -271,12 +271,22 @@ index 49af2a6..99679e7 100644
 +
 +
 +def test_repeated_import_of_same_module_yields_one_edge(tmp_path: Path) -> None:
++    """``_ts_import_edges`` returns a set, which would hide a duplicate edge
++    even if ``add_import_edge`` appended one twice -- count raw graph edges
++    instead so this can actually fail."""
++    from trailmark.parse import parse_directory as parse_tree
++
 +    (tmp_path / "helper.ts").write_text("export function a(): void {}\n")
 +    (tmp_path / "app.ts").write_text(
 +        'import { a } from "./helper";\nimport type { B } from "./helper";\n'
 +    )
 +
-+    edges = [e for e in _ts_import_edges(tmp_path) if e == ("app", "helper")]
++    graph = parse_tree(str(tmp_path), "typescript")
++    edges = [
++        e
++        for e in graph.edges
++        if e.kind == EdgeKind.IMPORTS and (e.source_id, e.target_id) == ("app", "helper")
++    ]
 +    assert len(edges) == 1
 +
 +
