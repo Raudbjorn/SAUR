@@ -35,7 +35,7 @@ source=(
 )
 sha256sums=('SKIP'
             'b17ea2239c999ae8f418a538f23d6af7a1c219aff0ebc15878cb6da11024b63b'
-            '049802ab9dcb3f4e6efcb039e5c50ce13dd6ddbff5a44f59606d83a3edcce0b3')
+            'eb330bf141d89cb1524cbdd163cc8c644452ccbf5674ec92db35d710aad44f48')
 
 pkgver() {
     cd "${srcdir}/${_srcname}"
