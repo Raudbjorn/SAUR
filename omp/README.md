@@ -16,8 +16,10 @@ tagged release of the fork above, not upstream `main`.
 - The extracted archive's top-level directory is `omp-14.1.4-acp.1/`, not
   `oh-my-pi-14.1.4-acp.1/` — the upstream project's own bundled `PKGBUILD`
   (`Maintainer: Bin Jin`, embedded in the fork's tree) still assumes the old
-  name and would fail `makepkg --verifysource` unmodified. This recipe fixes
-  the extracted path and pins a real `sha256sums` instead of `SKIP`.
+  name and would fail when the source is extracted or the build starts if
+  left unmodified (`sha256sums=('SKIP')` means `--verifysource` itself would
+  still pass). This recipe fixes the extracted path and pins a real
+  `sha256sums` instead of `SKIP`.
 
 ## Naming and conflicts
 
