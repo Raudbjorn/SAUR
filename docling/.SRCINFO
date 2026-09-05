@@ -54,7 +54,9 @@ pkgbase = docling
 	optdepends = python-openai-whisper>=20250625: audio transcription support
 	optdepends = python-numba>=0.63.0: audio transcription support
 	conflicts = python-transformers=5.13.0
+	conflicts = python-transformers<4.42.0
 	conflicts = python-transformers>=6.0.0
+	conflicts = python-websockets<14.0
 	conflicts = python-websockets>=17.0
 	source = docling-2.125.0.tar.gz::https://github.com/docling-project/docling/archive/refs/tags/v2.125.0.tar.gz
 	source = slim_meta_package.patch

@@ -15,8 +15,10 @@ license=('MIT')
 depends=(
   'python'
   "tree-sitter-typescript=${pkgver}"
-  'python-tree-sitter'
-  'tree-sitter'
+  # This grammar declares language ABI 14; python-tree-sitter below
+  # 0.23 cannot load it. The native tree-sitter library is not a
+  # runtime dependency: the extension module links none of it (ldd).
+  'python-tree-sitter>=0.23'
 )
 makedepends=(
   'python-build'

@@ -36,4 +36,31 @@ Verified against behaviour rather than imports: `docling-core`'s
 fixtures, passes on 4.1.1. No pinned `python-semchunk3` package exists in the
 AUR.
 
+### Verification
+
+Run against `docling-core` 2.95.0's own suite, with this package set installed
+(`python-semchunk` 4.1.1, `python-tiktoken`, `python-transformers`, and the
+four `python-tree-sitter-*` grammars):
+
+```bash
+cd docling-core-2.95.0
+python -m pytest -q -n auto --import-mode=importlib \
+  tests/test_hybrid_chunker.py tests/test_code_chunker.py \
+  tests/test_code_chunking_strategy.py tests/test_chunk_expander.py \
+  tests/test_line_chunker.py tests/test_page_chunker.py \
+  tests/test_hierarchical_chunker.py
+```
+
+Result: **76 passed, 1 failed**. The single failure is the Java case in
+`test_code_chunker.py`, which needs `tree-sitter-java-orchard` — a member of
+`docling-core`'s `dev` dependency group, not of the `chunking` extra, and not
+packaged in the AUR. Java code chunking is therefore unavailable; every other
+chunking path passes.
+
+This is deliberately not wired into `python-docling-core`'s `check()`. Doing so
+would make the stack's core package unbuildable without semchunk, the four
+grammars, transformers and tiktoken, inverting this repository's documented
+build order — `python-docling-parse` depends on `python-docling-core`, which
+would then depend on its own optional extras at build time.
+
 Restore a `<4.0.0` pin if those fixture tests ever start failing.

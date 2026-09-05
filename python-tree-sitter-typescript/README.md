@@ -17,6 +17,19 @@ no plain `.pyc`, and ordinary non-`-OO` imports find no cached bytecode under
 read-only `/usr/lib`, recompiling on every interpreter start. This recipe
 ships the Arch-standard levels 0 and 1. Nothing else is changed.
 
+## Dependencies
+
+This grammar declares language **ABI 14**, so `depends` carries
+`python-tree-sitter>=0.23` rather than an unversioned binding: an older
+binding raises `ValueError` when the grammar loads. The floor is per-grammar
+and reflects what the built module actually declares, read back with
+`Language(...).abi_version`.
+
+The native `tree-sitter` library is **not** a runtime dependency and was
+removed from `depends`. The extension module links none of it — `ldd` on the
+installed `.so` reports zero `libtree-sitter` entries; it uses Python's C API
+and hands back a grammar capsule.
+
 ## Build
 
 ```bash

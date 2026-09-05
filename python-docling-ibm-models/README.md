@@ -34,6 +34,7 @@ fail at runtime. The ceiling is restored as a versioned conflict:
 ```bash
 conflicts=(
   'python-transformers=5.13.0'
+  'python-transformers<4.42.0'
   'python-transformers>=6.0.0'
 )
 ```
@@ -73,6 +74,19 @@ also moot for this package, which registers through `AutoConfig.register` and
 `AutoModel.register` (`tableformer_v2/model.py:936-937`), both of which run
 cleanly at import.
 
-Upstream's optional OpenCV extra caps `opencv-python-headless <5.0.0.0`; the
-installed `python-opencv` is 5.0.0. `check()` passes regardless, but the
-legacy TableFormer image-preprocessing path was never exercised.
+The OpenCV `optdepend` carries upstream's ceiling, written as `<5` rather
+than as a literal transliteration of upstream's `<5.0.0.0`.
+
+> [!WARNING]
+> PEP 440 treats `5.0.0` and `5.0.0.0` as **equal**, so `<5.0.0.0` excludes
+> 5.0.0. pacman's `vercmp` ranks them by segment count, so it reports
+> `5.0.0 < 5.0.0.0` and a literal `<5.0.0.0` would admit the very version
+> upstream excludes. Confirmed with `vercmp 5.0.0 5.0.0.0` (returns `-1`) and
+> observed directly: with the literal bound, `pacman -Qi` marked the
+> `optdepend` `[installed]` against `python-opencv` 5.0.0. Do not transliterate
+> PEP 440 bounds into pacman constraints without checking `vercmp`.
+
+Arch's `python-opencv` is 5.x and no packaged provider of that name is in
+range (`opencv4` provides nothing, `python-opencv-git` declares no provides),
+so the `optdepend` correctly reports unsatisfied. `check()` passes regardless;
+the legacy TableFormer image-preprocessing path was never exercised.
