@@ -1,0 +1,27 @@
+pkgbase = mailspring-electron42-git
+	pkgdesc = Mailspring Git packaged for the system Electron 42 runtime
+	pkgver = 1.23.0.r0.g5b37181
+	pkgrel = 1
+	url = https://getmailspring.com/
+	arch = x86_64
+	license = GPL-3.0-or-later
+	makedepends = npm
+	makedepends = git
+	makedepends = nvm
+	makedepends = curl
+	makedepends = gendesk
+	makedepends = jq
+	depends = electron42
+	depends = db5.3
+	depends = hicolor-icon-theme
+	provides = mailspring=1.23.0
+	conflicts = mailspring
+	conflicts = mailspring-git
+	source = mailspring.git::git+https://github.com/Foundry376/Mailspring.git
+	source = mailspring.sh
+	source = mailspring-turso.patch
+	sha256sums = SKIP
+	sha256sums = b17ea2239c999ae8f418a538f23d6af7a1c219aff0ebc15878cb6da11024b63b
+	sha256sums = eb330bf141d89cb1524cbdd163cc8c644452ccbf5674ec92db35d710aad44f48
+
+pkgname = mailspring-electron42-git

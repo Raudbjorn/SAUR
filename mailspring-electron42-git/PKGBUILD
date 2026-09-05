@@ -1,0 +1,194 @@
+# Maintainer: svnbjrn <svnbjrn at sveinbjorn dot dev>
+# Based on the AUR mailspring-git recipe (zxp19821005) at commit 14194ab0d7e380694ecb9e7b31ccd6dd3267010c
+pkgname=mailspring-electron42-git
+_pkgname=Mailspring
+_appname=mailspring
+_srcname=mailspring.git
+_electronversion=42
+_nodeversion=22
+pkgver=1.23.0.r0.g5b37181
+pkgrel=1
+pkgdesc='Mailspring Git packaged for the system Electron 42 runtime'
+arch=('x86_64')
+url="https://getmailspring.com/"
+_ghurl="https://github.com/Foundry376/Mailspring"
+license=('GPL-3.0-or-later')
+conflicts=('mailspring' 'mailspring-git')
+provides=("mailspring=${pkgver%.r*}")
+depends=(
+    'electron42'
+    'db5.3'
+    'hicolor-icon-theme'
+)
+makedepends=(
+    'npm'
+    'git'
+    'nvm'
+    'curl'
+    'gendesk'
+    'jq'
+)
+source=(
+    "${_srcname}::git+${_ghurl}.git"
+    "${_appname}.sh"
+    "mailspring-turso.patch"
+)
+sha256sums=('SKIP'
+            'b17ea2239c999ae8f418a538f23d6af7a1c219aff0ebc15878cb6da11024b63b'
+            'eb330bf141d89cb1524cbdd163cc8c644452ccbf5674ec92db35d710aad44f48')
+
+pkgver() {
+    cd "${srcdir}/${_srcname}"
+    set -o pipefail
+    git describe --long --tags --abbrev=7 | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/v//g' ||
+    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+_ensure_local_nvm() {
+    export NVM_DIR="${srcdir}/.nvm"
+    source /usr/share/nvm/init-nvm.sh || [[ $? != 1 ]]
+    nvm install "${_nodeversion}"
+    nvm use "${_nodeversion}"
+}
+
+_get_app_dir() {
+    # @electron/packager writes to app/dist/<name>-linux-x64/ and reproduces
+    # the Electron dist layout: resources.pak sits at the application root
+    # next to the binary, and the bundled app is resources/app.asar. Anchor
+    # on resources.pak under app/dist only, so an Electron dist anywhere else
+    # in $srcdir can never be selected, and require the asar to be present.
+    local _pak _app_dir
+    _pak=$(find "${srcdir}/${_srcname}/app/dist" -type f -name resources.pak -print -quit)
+    [[ -n "${_pak}" ]] || { echo "==> ERROR: resources.pak not found under app/dist" >&2; return 1; }
+    _app_dir=$(dirname "${_pak}")
+    [[ -f "${_app_dir}/resources/app.asar" ]] \
+        || { echo "==> ERROR: ${_app_dir}/resources/app.asar missing; not a packaged application root" >&2; return 1; }
+    printf '%s\n' "${_app_dir}"
+}
+
+# Deterministic build environment: standard npm registry, no geolocation probe,
+# no geography-dependent mirror selection. SYSTEM_ELECTRON_VERSION pins the
+# system Electron 42 binary so native modules and electron-builder rebuild
+# against the installed runtime.
+_set_build_env() {
+    export ELECTRON_DIST="/usr/lib/electron${_electronversion}"
+    export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+    export SYSTEM_ELECTRON_VERSION="$(electron${_electronversion} -v | sed 's/v//g')"
+    export HOME="${srcdir}/.electron-gyp"
+    export NPM_CONFIG_CACHE="${srcdir}/.npm_cache"
+    export NPM_CONFIG_MAXSOCKETS=32
+    # Pin the public npm registry and ignore any inherited user/global
+    # .npmrc so registry selection cannot be redirected by environment or
+    # on-disk config. Electron binary download is disabled above, so no
+    # electron mirror is consulted.
+    export NPM_CONFIG_REGISTRY="https://registry.npmjs.org/"
+    export npm_config_userconfig=/dev/null
+    export npm_config_globalconfig=/dev/null
+}
+
+prepare() {
+    cd "${srcdir}/${_srcname}"
+    # ------------------------------------------------------------------
+    # Turso/libsql port (mailspring-turso.patch):
+    # The upstream Mailspring recipe uses `better-sqlite3`, a native
+    # synchronous binding to SQLite. For the SAUR build we replace it
+    # with `@libsql/client` (Turso's all-async libsql binding) so the
+    # database-store can run on system Electron 42 without us having to
+    # recompile a native module per ABI. The patch is applied via
+    # `git apply --3way` so an upstream reshuffle that touches the
+    # same lines still resolves cleanly.
+    #
+    # Invariants (per the port brief):
+    #   * `better-sqlite3` is dropped; the package uses `@libsql/client`.
+    #   * libsql has no readonly constructor / connection flag on the JS
+    #     surface, so the read-only contract is enforced via SQLite's own
+    #     `PRAGMA query_only=ON` after the mutating setup PRAGMAs (WAL,
+    #     page_size, cache_size, synchronous) have been applied. The
+    #     background agent applies the same PRAGMA immediately after
+    #     `createClient()`.
+    #   * The `HAVE_NANOSLEEP` guard is dropped: libsql's executor
+    #     handles lock-contention retry internally.
+    # ------------------------------------------------------------------
+    git apply --3way "${srcdir}/mailspring-turso.patch"
+    # The tracked `mailspring-turso.patch` is the single source of the
+    # exact `@libsql/client` pin (0.17.4); we do not re-pin it here so
+    # the patch remains authoritative.
+    sed -i -e "
+        s/@electronversion@/${_electronversion}/g
+        s/@appname@/${_appname}/g
+        s/@runname@/app.asar/g
+        s/@cfgdirname@/${_pkgname}/
+    " "${srcdir}/${_appname}.sh"
+    _set_build_env
+    _ensure_local_nvm
+    sed -i "s/\"electron\": \"[^\"]*\"/\"electron\": \"${SYSTEM_ELECTRON_VERSION}\"/g" package.json
+    sed -i "s/tmpdir,/tmpdir,\n    electronDist: process.env.ELECTRON_DIST,/" app/build/build.js
+    grep -q "\"electron\": \"${SYSTEM_ELECTRON_VERSION}\"" package.json \
+        || { echo "==> ERROR: electron version rewrite did not apply to package.json" >&2; return 1; }
+    grep -q "electronDist: process.env.ELECTRON_DIST," app/build/build.js \
+        || { echo "==> ERROR: electronDist insertion did not apply to app/build/build.js" >&2; return 1; }
+    NODE_ENV=development    npm install
+    # Render .desktop and .metainfo templates (createDebInstaller would
+    # normally do this; we skip the .deb build because dpkg-deb is
+    # unavailable in the chroot, but the rendered assets are still
+    # required for package()). Templates use underscore-style ERB
+    # delimiters (`<%= name %>`); we substitute them directly. The
+    # upstream `app/package.json` is the authoritative source for the
+    # desktop `Comment` and the AppStream `summary`; we read it once
+    # with `jq` (already a makedepend) and feed the result into both
+    # templates so the rendered strings match the upstream metadata.
+    local _assets_dir="${srcdir}/${_srcname}/app/build/resources/linux"
+    local _dist_dir="${srcdir}/${_srcname}/app/dist"
+    install -d -m 755 "$_dist_dir"
+    local _app_pkg="${srcdir}/${_srcname}/app/package.json"
+    local _description _product_name _app_id
+    _description=$(jq -r '.description' "$_app_pkg")
+    _product_name=$(jq -r '.productName' "$_app_pkg")
+    _app_id=$(jq -r '.name' "$_app_pkg")
+    # Escape sed replacement metacharacters (\, &, and the | delimiter) so
+    # values from app/package.json are treated as literal data, not sed syntax.
+    _sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+    _description=$(_sed_escape "$_description")
+    _product_name=$(_sed_escape "$_product_name")
+    _app_id=$(_sed_escape "$_app_id")
+    sed -e "s|<%= productName %>|${_product_name}|g" \
+        -e "s|<%= description %>|${_description}|g" \
+        -e "s|<%= name %>|${_app_id}|g" \
+        "$_assets_dir/Mailspring.desktop.in" > "$_dist_dir/mailspring.desktop"
+    sed -e "s|<%= name %>|${_app_id}|g" \
+        -e "s|<%= productName %>|${_product_name}|g" \
+        -e "s|<%= description %>|${_description}|g" \
+        -e 's|<%= desktopName %>|mailspring.desktop|g' \
+        "$_assets_dir/mailspring.metainfo.xml.in" > "$_dist_dir/mailspring.metainfo.xml"
+    if grep -q '<%' "$_dist_dir/mailspring.desktop" \
+        || grep -q '<%' "$_dist_dir/mailspring.metainfo.xml"; then
+        echo "Unrendered template placeholders in desktop/metainfo" >&2
+        return 1
+    fi
+}
+
+build() {
+    cd "${srcdir}/${_srcname}"
+    _set_build_env
+    _ensure_local_nvm
+    NODE_ENV=production     npm run build -- --skip-installers
+}
+
+package() {
+    install -Dm755 "${srcdir}/${_appname}.sh" "${pkgdir}/usr/bin/${_appname}"
+    install -Dm755 -d "${pkgdir}/usr/lib/${_appname}"
+    local _app_dir
+    _app_dir="$(_get_app_dir)"
+    cp -a "${_app_dir}/resources/"* "${pkgdir}/usr/lib/${_appname}/"
+    _icon_sizes=(16 32 64 128 256 512)
+    for _icon_size in "${_icon_sizes[@]}"; do
+        install -Dm644 \
+            "${srcdir}/${_srcname}/app/build/resources/linux/icons/${_icon_size}.png" \
+            "${pkgdir}/usr/share/icons/hicolor/${_icon_size}x${_icon_size}/apps/${_appname}.png"
+    done
+    local _dist="${srcdir}/${_srcname}/app/dist"
+    install -Dm644 "${_dist}/mailspring.desktop" \
+        "${pkgdir}/usr/share/applications/${_appname}.desktop"
+    install -Dm644 "${_dist}/mailspring.metainfo.xml" \
+        -t "${pkgdir}/usr/share/metainfo"
+}
