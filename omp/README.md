@@ -28,14 +28,43 @@ tagged release of the fork above, not upstream `main`.
 - `conflicts=(oh-my-pi-git)`: both packages install `/usr/bin/omp` from the
   same upstream project. Only one can be installed at a time.
 
-## Known deviation from the packaging guide
+## Build isolation and host flags
 
-`build()` runs `rustup toolchain install` and `bun install`, both of which
-touch the network and write outside `$srcdir` (into `~/.rustup`, `~/.cargo`,
-`~/.bun`). The packaging guide asks recipes to avoid network activity in
-`build()`; this one doesn't, because vendoring the Rust nightly toolchain and
-the full `bun` dependency tree is out of scope for this pass. Not fixed here,
-left as inherited behavior from the upstream recipe this was adapted from.
+- `RUSTUP_HOME`/`CARGO_HOME` are scoped under `$srcdir`, and the `PATH`
+  export that follows them was updated to match (`${CARGO_HOME}/bin`, not
+  the previous hardcoded `${HOME}/.cargo/bin`) — rustup creates its proxy
+  shims under `$CARGO_HOME/bin` at `toolchain install` time, so both env
+  vars have to move together or the shim lookup breaks.
+- `bun install` now runs with `--frozen-lockfile --cache-dir="$srcdir/bun-cache"`
+  instead of touching `~/.bun` and allowing a silent lockfile drift.
+- `CFLAGS`/`CXXFLAGS` are *not* blanket-unset. `crates/pi-natives/build.rs`
+  compiles a vendored C scanner (`tree-sitter-glimmer`) via the `cc` crate,
+  which reads `CFLAGS`. Instead, only `-march=`/`-mtune=` tokens are
+  stripped from them: the two `cargo build` passes below explicitly target
+  `x86-64-v2` ("baseline") and `x86-64-v3` ("modern"); leaving a host tuning
+  flag like `-march=znver4` in `CFLAGS` would let it leak into the C
+  scanner compiled for the "baseline" variant, quietly defeating the split.
+  Arch's hardening flags (`_FORTIFY_SOURCE`, stack-clash-protection, etc.)
+  are otherwise preserved. `RUSTFLAGS` is appended to (not replaced),
+  keeping the two `-C target-cpu=...` selectors as the effective final say
+  for that flag specifically. `CC`/`CXX`/`LDFLAGS` are left alone (no
+  script here reads `LDFLAGS`, and cc-rs's default compiler discovery
+  matches the host `CC`/`CXX` unset or not).
+- Still a real deviation from the packaging guide: `rustup toolchain install`
+  and `bun install` both need network access during `build()` (a fresh
+  builder has neither the nightly toolchain nor the npm-registry deps
+  vendored). Not fixed here — vendoring either is out of scope for this
+  pass.
+
+## Native module install layout
+
+`packages/natives/native/index.js` looks for the compiled `.node` addon in
+a per-user cache first (XDG data dir or `~/.omp/natives/<version>`), then
+falls back to `path.dirname(process.execPath)` — i.e. alongside the running
+`omp` binary. The `.node` files are shared objects loaded via `dlopen`, not
+executables, so they're installed to `/usr/lib/omp/` at mode `644`, with
+relative symlinks left at `/usr/bin/pi_natives.linux-x64-{baseline,modern}.node`
+so the executable-directory fallback still resolves.
 
 ## Not claimed
 
@@ -43,12 +72,16 @@ left as inherited behavior from the upstream recipe this was adapted from.
   were run — real source, real checksum, valid metadata. The actual
   `build()` (nightly Rust toolchain install, two `cargo build --release`
   passes, `bun` install and bundle) was not exercised. No `pkg.tar.zst` has
-  been produced or installed from this recipe.
+  been produced or installed from this recipe. The `RUSTUP_HOME`/`CARGO_HOME`
+  relocation, the `cc` crate's read of the stripped `CFLAGS`, and the
+  native-module symlink fallback are reasoned from reading the fork's
+  source (`build.rs`, `packages/natives/native/index.js`) and confirmed
+  bun CLI flags (`bun install --help`), not from a completed build.
 - `namcap PKGBUILD` flags two cosmetic warnings inherited from the upstream
   recipe (literal `x86_64` instead of `$CARCH`, use of the internal `msg2`
   helper) — not fixed, not build-affecting.
 - The `oh-my-pi-git`/`omp` conflict is asserted from reading both PKGBUILDs
-  (both install `/usr/bin/omp`), not from installing both side by side.
+  (both install the same binary path), not from installing both side by side.
 
 ## Verify
 
