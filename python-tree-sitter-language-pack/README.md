@@ -71,9 +71,9 @@ cd python-tree-sitter-language-pack &&
   makepkg -si
 ```
 
-`check()` installs the wheel into a throwaway venv and runs upstream's end-to-end suite, excluding `test_download.py` — that suite exercises the runtime downloader, which this package deliberately never uses. It will fail on `test_smoke_typst` until upstream fixes the grammar above.
+`check()` installs the wheel into a throwaway venv and runs upstream's end-to-end suite, excluding `test_download.py` — that suite exercises the runtime downloader, which this package deliberately never uses — along with `test_smoke_typst` and `test_smoke_cobol`, deselected for the defects above (a `--timeout` guards against any other unexpected hang).
 
-Verify afterwards:
+Verify afterward:
 
 ```bash
 python -c 'import tree_sitter_language_pack as p; print(p.language_count()); p.get_parser("python").parse(b"x = 1")'

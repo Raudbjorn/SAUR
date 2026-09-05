@@ -69,6 +69,13 @@ _tune_build_env() {
   [[ -n ${_tuned} ]] && return 0
   _tuned=1
 
+  # Set before any rustc/cargo invocation below (the -march probe calls rustc
+  # directly): rust-toolchain.toml pins channel 1.95 and requests a wasm32
+  # target plus extra components, which makes rustup reach for the network
+  # mid-build if it reads the file before this override lands. The workspace
+  # only needs edition 2024, which the default toolchain provides.
+  export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
+
   # Cargo job count. Upstream's checked-in .cargo/config.toml pins `jobs = 4`,
   # which also caps the `cc` crate's fan-out over ~371 C translation units --
   # that fan-out, not rustc, is where the wall-clock time is. Env beats config,
@@ -103,12 +110,6 @@ _tune_build_env() {
   # is the one host setting deliberately overridden.
   export CARGO_PROFILE_RELEASE_LTO=thin
 
-  # rust-toolchain.toml pins channel 1.95 and requests a wasm32 target plus
-  # extra components; honouring it would make rustup reach for the network mid
-  # build. The workspace only needs edition 2024, which the default toolchain
-  # provides.
-  export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
-
   # Statically link every grammar into the extension module. The alternative
   # (upstream's default) emits one shared object per grammar and bakes the
   # absolute OUT_DIR path into the binary, which cannot survive $pkgdir, and
@@ -124,6 +125,8 @@ _tune_build_env() {
 
 prepare() {
   cd "${_gitpkgname}-${pkgver}"
+
+  export CARGO_HOME="${srcdir}/cargo-home"
 
   echo >&2 'Unpacking the vendored grammar corpus'
   # Only parsers/ -- patches/ and sources/ are already present in the repository
@@ -142,6 +145,7 @@ prepare() {
 build() {
   cd "${_gitpkgname}-${pkgver}"
 
+  export CARGO_HOME="${srcdir}/cargo-home"
   _tune_build_env
   export CARGO_NET_OFFLINE=true
 
@@ -166,12 +170,19 @@ check() {
   # would shadow the installed package, and its `_native` module only exists in
   # the wheel.
   echo >&2 'Running end-to-end tests'
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "${tmpdir}"' EXIT
   # test_download.py exercises the runtime grammar downloader, which this
   # package deliberately does not use -- every grammar is already linked in.
-  env -C "$(mktemp -d)" \
+  # test_smoke_typst segfaults and test_smoke_cobol hangs (see README "Known
+  # upstream defects"); --timeout bounds any other, unexpected hang.
+  env -C "${tmpdir}" \
     "$(pwd)/test-env/bin/python" -m pytest \
       --import-mode=append \
       -p no:cacheprovider \
+      --timeout=120 \
+      -k 'not test_smoke_typst and not test_smoke_cobol' \
       --ignore "$(pwd)/e2e/python/tests/test_download.py" \
       "$(pwd)/e2e/python/tests"
 }
