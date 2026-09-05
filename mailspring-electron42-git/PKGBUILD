@@ -52,12 +52,18 @@ _ensure_local_nvm() {
 }
 
 _get_app_dir() {
-    local _pak
-    _pak=$(find "${srcdir}" \
-        \( -path '*/.npm_cache' -o -path '*/.nvm' -o -path '*/.electron-gyp' \) -prune -o \
-        -type f -name resources.pak -print -quit)
-    [[ -n "${_pak}" ]] || { echo "==> ERROR: resources.pak not found under \$srcdir" >&2; return 1; }
-    dirname "${_pak}"
+    # @electron/packager writes to app/dist/<name>-linux-x64/ and reproduces
+    # the Electron dist layout: resources.pak sits at the application root
+    # next to the binary, and the bundled app is resources/app.asar. Anchor
+    # on resources.pak under app/dist only, so an Electron dist anywhere else
+    # in $srcdir can never be selected, and require the asar to be present.
+    local _pak _app_dir
+    _pak=$(find "${srcdir}/${_srcname}/app/dist" -type f -name resources.pak -print -quit)
+    [[ -n "${_pak}" ]] || { echo "==> ERROR: resources.pak not found under app/dist" >&2; return 1; }
+    _app_dir=$(dirname "${_pak}")
+    [[ -f "${_app_dir}/resources/app.asar" ]] \
+        || { echo "==> ERROR: ${_app_dir}/resources/app.asar missing; not a packaged application root" >&2; return 1; }
+    printf '%s\n' "${_app_dir}"
 }
 
 # Deterministic build environment: standard npm registry, no geolocation probe,

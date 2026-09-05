@@ -616,7 +616,15 @@ electron42_pkg=/var/cache/pacman/pkg/electron42-42.7.1-1-x86_64.pkg.tar.zst
 # `pacman -U` runs on sveinbjorn, so the two locally built archives must be
 # staged to a path sveinbjorn can read. electron42_pkg already lives in
 # sveinbjorn's package cache and is used in place.
+#
+# The `sveinbjorn` ssh alias authenticates as root (`User root` in
+# ~/.ssh/config). That is what makes the root-owned package cache writable
+# for scp and lets the later `pacman -U` run without sudo; staging into the
+# cache also keeps both archives available as rollback sources. Fail here,
+# not mid-transfer, if the alias ever stops resolving to a user that can
+# write there.
 _stage=/var/cache/pacman/pkg
+ssh sveinbjorn test -w "${_stage}"
 for _p in "$bitwarden_pkg_local" "$mailspring_pkg_local"; do
     zstd -t "$_p"                                      # integrity-check the local archive
     scp "$_p" "sveinbjorn:${_stage}/"
@@ -880,26 +888,24 @@ Run from the SAUR root:
 ```bash
 git diff --check
 (
+  set -e
   cd bitwarden-electron42
   bash -n PKGBUILD
   bash -n bitwarden.sh
-  tmp=$(mktemp)
-  makepkg --printsrcinfo > "$tmp"
-  cmp -s .SRCINFO "$tmp"
-  rm -f "$tmp"
+  cmp -s .SRCINFO <(makepkg --printsrcinfo)
 )
 (
+  set -e
   cd mailspring-electron42-git
   bash -n PKGBUILD
   bash -n mailspring.sh
-  tmp=$(mktemp)
-  makepkg --printsrcinfo > "$tmp"
-  cmp -s .SRCINFO "$tmp"
-  rm -f "$tmp"
+  cmp -s .SRCINFO <(makepkg --printsrcinfo)
 )
 ```
 
-Expected: every command exits 0.
+Expected: every command exits 0. Each subshell exits nonzero if any check
+inside it fails, including a stale `.SRCINFO`; `cmp` is the last command
+so its status is the subshell's status.
 
 - [ ] **Step 8: Commit final repository documentation**
 
