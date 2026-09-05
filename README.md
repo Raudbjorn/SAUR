@@ -10,6 +10,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | Package | Description | Status |
 | --- | --- | --- |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
+| [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
 | [`python-installer`](python-installer/) | Temporary 1.0.1 bridge required to build AUR `python-rapidocr` | Remove after configured repositories ship 1.0.1 or newer |
 | [`python-tree-sitter025`](python-tree-sitter025/) | `python-tree-sitter` pinned to 0.25.x; 0.26.0 faults on large Solidity inputs | Remove once 0.26.1 or newer passes the reproducer |
 | [`python-tree-sitter-language-pack`](python-tree-sitter-language-pack/) | 371 tree-sitter grammars linked into the extension module, with no run-time downloads | Rewritten for upstream 1.x; two upstream grammars are known broken |
@@ -26,6 +27,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Package recipe
 │   └── README.md            # Package-specific notes
+├── omp/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Fork release build; fixed source URL and extracted path
+│   └── README.md            # Fork rationale, naming/conflicts, build() not yet run
 ├── python-installer/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Temporary repository-version bridge

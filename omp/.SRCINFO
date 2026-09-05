@@ -1,0 +1,20 @@
+pkgbase = omp
+	pkgdesc = AI coding agent for the terminal, built from a personal fork (hash-anchored edits, optimized tool harness, LSP, Python, browser, subagents)
+	pkgver = 14.1.4
+	pkgrel = 1
+	url = https://github.com/Raudbjorn/omp
+	arch = x86_64
+	license = MIT
+	makedepends = bun
+	makedepends = rustup
+	makedepends = zig
+	depends = gcc-libs
+	depends = glibc
+	depends = icu
+	depends = zlib
+	conflicts = oh-my-pi-git
+	options = !strip
+	source = omp-14.1.4.tar.gz::https://github.com/Raudbjorn/omp/releases/download/v14.1.4-acp.1/omp-14.1.4-acp.1.tar.gz
+	sha256sums = af82445569dd3fe0eee245b1f3eda94064ed22923f7aeb960a3276df0747c87b
+
+pkgname = omp
