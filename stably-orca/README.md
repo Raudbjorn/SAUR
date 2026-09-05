@@ -27,18 +27,16 @@ subtree into `/usr/lib/stably-orca/`, leaving Chromium at the system path.
 ## Why `.nvmrc`
 
 `extra/nodejs` is currently on the v26 line, but upstream `package.json`
-declares `"engines": { "node": "24" }`. The build binds the Node interpreter
-to `/home/svnbjrn/.nvm/versions/node/v24.15.0/bin` (recorded in
-`PKGBUILD`) and refuses to fall back to system Node. The `.nvmrc` is the
-single source of truth.
+declares `"engines": { "node": "24" }`. `makedepends` pins
+`extra/nodejs-lts-krypton` (Node 24 LTS), which conflicts with `nodejs` so
+pacman swaps it in for the build. `prepare()` still checks the running
+`node`'s major version against `.nvmrc` defensively, in case that mapping
+ever drifts.
 
-This means the build is reproducible on this host only. Two options when
-the host's `extra/nodejs` catches up to v24:
-
-1. Revert `makedepends` to a pacman pin (`nodejs>=24 nodejs<25`); delete
-   `.nvmrc` from `source=()` and the `_nvm_node_path` plumbing from
-   `prepare()`/`build()`.
-2. Add a `nodejs-bin` AUR dep at the v24 line.
+`extra/nodejs` moved past the v24 line to v26 and won't come back to it;
+`nodejs-lts-krypton` is the durable fix for as long as upstream pins
+`engines.node` to `"24"`. If upstream bumps that engine major, switch
+`makedepends` to whichever `nodejs`/`nodejs-lts-*` package provides it.
 
 ## Verify
 

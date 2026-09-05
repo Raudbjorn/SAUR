@@ -51,13 +51,13 @@ optdepends=(
 makedepends=(
   'fakeroot'
   'git'
+  'nodejs-lts-krypton'
   'python-setuptools'
 )
 options=('!strip' '!debug')
 
 _pnpmver=10.24.0
 _electronmajor=43
-_nvm_node_path='/home/svnbjrn/.nvm/versions/node/v24.15.0/bin'
 
 source=(
   "$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
@@ -72,21 +72,18 @@ noextract=("pnpm-$_pnpmver.tgz")
 prepare() {
   cd "$srcdir"
 
-  # Why: extra/nodejs is currently v26; upstream engines is node>=24<25. Build
-  # binds to a user-managed Node that matches the contract and refuses to fall
-  # back to system node if the version drifts. .nvmrc is the single source of
-  # truth for the build node.
+  # Why: extra/nodejs is currently v26; upstream engines is node>=24<25.
+  # makedepends pins nodejs-lts-krypton (Node 24 LTS) so `node` on PATH is
+  # already the right major line; .nvmrc is checked defensively in case that
+  # ever drifts.
   [[ -f "$srcdir/.nvmrc" ]] || { printf 'missing .nvmrc\n' >&2; return 1; }
-  local wanted
+  local wanted wanted_major have have_major
   wanted="$(<"$srcdir/.nvmrc")"
-  if [[ ! -x "$_nvm_node_path/node" ]]; then
-    printf 'expected node at %s\n' "$_nvm_node_path" >&2
-    return 1
-  fi
-  local have
-  have="$("$_nvm_node_path/node" -p 'process.versions.node')"
-  if [[ "$have" != "$wanted" ]]; then
-    printf '.nvmrc=%s but node at %s reports %s\n' "$wanted" "$_nvm_node_path" "$have" >&2
+  wanted_major="${wanted%%.*}"
+  have="$(node -p 'process.versions.node')"
+  have_major="${have%%.*}"
+  if [[ "$have_major" != "$wanted_major" ]]; then
+    printf '.nvmrc requires node %s.x but system node reports %s\n' "$wanted_major" "$have" >&2
     return 1
   fi
 
@@ -126,8 +123,6 @@ PY
 
 build() {
   cd "$srcdir/orca-$pkgver"
-
-  export PATH="$_nvm_node_path:$PATH"
 
   local electron_dist="/usr/lib/electron$_electronmajor"
   local electron_version
@@ -179,15 +174,16 @@ JS
   "${pnpm[@]}" run ensure:electron-runtime
 
   # Why: system Electron resolves process.resourcesPath to /usr/lib/electron43/resources,
-  # but Orca's packaged assets live under /usr/lib/stably-orca. Rewrite before
-  # packaging so packaged JS keeps a stable lookup path.
-  python - <<'PY'
+  # but Orca's packaged assets live under /usr/lib/$pkgname. Rewrite before
+  # packaging so packaged JS keeps a stable lookup path derived from pkgname.
+  python - "/usr/lib/$pkgname" <<'PY'
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 pattern = re.compile(r"(?<![\w$.])process\.resourcesPath\b")
-replacement = "'/usr/lib/stably-orca'"
+replacement = repr(sys.argv[1])
 changed_files = []
 changed_references = 0
 for path in Path("out").rglob("*.js"):
@@ -299,7 +295,7 @@ PY
     'set -e' \
     'export ELECTRON_IS_DEV=0' \
     'export ELECTRON_FORCE_IS_PACKAGED=true' \
-    'exec /usr/bin/electron43 /usr/lib/stably-orca/app.asar "$@"' \
+    "exec /usr/bin/electron43 /usr/lib/$pkgname/app.asar \"\$@\"" \
   ) "$pkgdir/usr/bin/stably-orca"
   chmod 0755 "$pkgdir/usr/bin/stably-orca"
 
@@ -308,7 +304,7 @@ PY
     '#!/usr/bin/env bash' \
     'set -e' \
     'unset NODE_OPTIONS NODE_REPL_EXTERNAL_MODULE' \
-    'exec env ELECTRON_RUN_AS_NODE=1 /usr/bin/electron43 /usr/lib/stably-orca/app.asar.unpacked/out/cli/index.js "$@"' \
+    "exec env ELECTRON_RUN_AS_NODE=1 /usr/bin/electron43 /usr/lib/$pkgname/app.asar.unpacked/out/cli/index.js \"\$@\"" \
   ) "$pkgdir/usr/bin/orca-ide"
   chmod 0755 "$pkgdir/usr/bin/orca-ide"
 
