@@ -28,6 +28,21 @@ tagged release of the fork above, not upstream `main`.
 - `conflicts=(oh-my-pi-git)`: both packages install `/usr/bin/omp` from the
   same upstream project. Only one can be installed at a time.
 
+## CPU floor: `arch=(x86_64_v2)`, not plain `x86_64`
+
+The "baseline" native addon (`pi_natives.linux-x64-baseline.node`) is compiled
+with `-C target-cpu=x86-64-v2`, and `packages/natives/native/index.js` always
+loads either that or the `x86-64-v3` "modern" addon — there is no plain-v1
+fallback (matching upstream's own naming in `packages/natives/README.md`,
+which calls v2 "baseline"). Declaring `arch=(x86_64)` would let pacman
+install this on genuine x86-64-v1-only hardware, where the addon would fail
+to load at runtime (illegal instruction) rather than at install time.
+`arch=(x86_64_v2)` states the real floor per
+[alpm-architecture(7)](https://man.archlinux.org/man/alpm-architecture.7.en).
+In practice this excludes only pre-Nehalem-era x86_64 CPUs (~2008 and
+earlier); this packager's own hardware and the vast majority of current
+machines are already v3 or newer.
+
 ## Build isolation and host flags
 
 - `RUSTUP_HOME`/`CARGO_HOME` are scoped under `$srcdir`, and the `PATH`
