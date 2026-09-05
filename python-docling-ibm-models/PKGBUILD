@@ -25,7 +25,14 @@ depends=(
   'python-transformers'
   'python-numpy>=1.24.4'
 )
-conflicts=('python-transformers=5.13.0')
+# The dependency above is unversioned, which drops upstream's
+# 'transformers <6.0.0' ceiling as well as its floor. Restore the ceiling
+# here: a versioned conflict does not match python-transformers-git's bare
+# provide, so it constrains only a real versioned provider.
+conflicts=(
+  'python-transformers=5.13.0'
+  'python-transformers>=6.0.0'
+)
 makedepends=(
   'python-build'
   'python-installer'

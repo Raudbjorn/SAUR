@@ -41,6 +41,30 @@ fail dependency resolution despite both being installed and above the floor
 Both are unversioned here. The `-git` packages are left alone: replacing them
 is a system-wide decision this recipe has no business making.
 
+Unversioning drops upstream's ceilings along with its floors, so the ceilings
+are restored as versioned conflicts — upstream caps `transformers <6.0.0`
+(and excludes 5.13.0 on Linux) and `websockets <17.0`:
+
+```bash
+conflicts=(
+  'python-transformers=5.13.0'
+  'python-transformers>=6.0.0'
+  'python-websockets>=17.0'
+)
+```
+
+A versioned conflict does not match an unversioned provide, so these constrain
+only real versioned providers. Verified with `pacman -U --print`, which
+resolves cleanly with both `-git` packages installed.
+
+The two `optdepends` whose providers declare bare provides — `python-transformers`
+here and `python-websockets` — are likewise unversioned, with the floor kept as
+prose in the description. `optdepends` never block an install, but pacman does
+report whether each is satisfied, and a versioned entry is reported unsatisfied
+against a bare provide: it told users the feature was unavailable when it was
+not. `pacman -Qi docling` now shows
+`python-websockets: remote Docling service streaming (14.0 or newer) [installed]`.
+
 ## Build
 
 ```bash

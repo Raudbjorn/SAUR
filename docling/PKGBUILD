@@ -33,6 +33,17 @@ depends=(
   'python-rich>=13.0.0'
   'python-opencv>=4.6.0'
 )
+# The python-transformers and python-websockets dependencies above are
+# unversioned, which drops upstream's ceilings along with its floors.
+# Restore them here: a versioned conflict does not match the -git
+# packages' bare provides, so these constrain only real versioned
+# providers. Upstream caps transformers <6.0.0 (and excludes 5.13.0
+# on Linux) and websockets <17.0.
+conflicts=(
+  'python-transformers=5.13.0'
+  'python-transformers>=6.0.0'
+  'python-websockets>=17.0'
+)
 makedepends=(
   'python-build'
   'python-installer'
@@ -70,7 +81,9 @@ optdepends=(
   'python-tree-sitter-javascript>=0.23.1: JavaScript-aware semantic chunking'
   'python-tree-sitter-typescript>=0.23.2: TypeScript-aware semantic chunking'
   'python-httpx>=0.28: remote Docling service support'
-  'python-websockets>=14.0: remote Docling service streaming'
+  # Unversioned so pacman can report it satisfied by python-websockets-git,
+  # whose provide carries no version. Floor kept as prose.
+  'python-websockets: remote Docling service streaming (14.0 or newer)'
   'python-dotenv>=1.0: load CLI configuration from .env files'
   'python-openai-whisper>=20250625: audio transcription support'
   'python-numba>=0.63.0: audio transcription support'

@@ -33,7 +33,7 @@ pkgbase = python-docling-core
 	optdepends = python-tree-sitter-c>=0.23.4: C code chunking
 	optdepends = python-tree-sitter-javascript>=0.23.1: JavaScript code chunking
 	optdepends = python-tree-sitter-typescript>=0.23.2: TypeScript code chunking
-	optdepends = python-transformers>=4.42.0: Hugging Face tokenization for chunking
+	optdepends = python-transformers: Hugging Face tokenization for chunking (4.42.0 or newer)
 	optdepends = python-huggingface-hub: tokenizer download for the Hugging Face chunker
 	optdepends = python-tiktoken>=0.9.0: OpenAI tokenization for chunking
 	optdepends = python-lxml>=6.0.2: dclq DocLang query tooling

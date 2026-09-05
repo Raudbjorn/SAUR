@@ -49,10 +49,13 @@ pkgbase = docling
 	optdepends = python-tree-sitter-javascript>=0.23.1: JavaScript-aware semantic chunking
 	optdepends = python-tree-sitter-typescript>=0.23.2: TypeScript-aware semantic chunking
 	optdepends = python-httpx>=0.28: remote Docling service support
-	optdepends = python-websockets>=14.0: remote Docling service streaming
+	optdepends = python-websockets: remote Docling service streaming (14.0 or newer)
 	optdepends = python-dotenv>=1.0: load CLI configuration from .env files
 	optdepends = python-openai-whisper>=20250625: audio transcription support
 	optdepends = python-numba>=0.63.0: audio transcription support
+	conflicts = python-transformers=5.13.0
+	conflicts = python-transformers>=6.0.0
+	conflicts = python-websockets>=17.0
 	source = docling-2.125.0.tar.gz::https://github.com/docling-project/docling/archive/refs/tags/v2.125.0.tar.gz
 	source = slim_meta_package.patch
 	b2sums = 49084628f6f192ef7b8e3d917ca1dc1960f8626539befc80e06ce18643526f6f82b47e90bcdd1ec371fd6a0aba7135e13276692fd0f475dab0368456556cb6b1
