@@ -1,0 +1,39 @@
+pkgbase = trailmark-git
+	pkgdesc = Parse source code into a queryable graph of functions, classes, calls, and semantic annotations, with community fork patches
+	pkgver = 0.5.0.r2.gf7e19d3
+	pkgrel = 1
+	url = https://github.com/trailofbits/trailmark
+	arch = x86_64
+	license = Apache-2.0
+	checkdepends = python-hypothesis
+	checkdepends = python-pytest
+	checkdepends = python-pytest-xdist
+	makedepends = git
+	makedepends = python-build
+	makedepends = python-hatchling
+	makedepends = python-installer
+	makedepends = python-wheel
+	depends = glibc
+	depends = python
+	depends = python-tree-sitter>=0.25
+	depends = python-tree-sitter<0.26
+	depends = python-tree-sitter-language-pack>=1.9
+	depends = python-tree-sitter-sql>=0.3.11
+	depends = python-rustworkx>=0.17
+	provides = trailmark
+	conflicts = trailmark
+	options = !debug
+	source = trailmark-src::git+https://github.com/trailofbits/trailmark.git#commit=f7e19d3ee37c02ca4e897e1bb901fc4868888e21
+	source = 0001-solidity-state-web.patch
+	source = 0002-java-vuln-poc-example.patch
+	source = 0003-js-ts-router-entrypoints.patch
+	source = 0004-js-ts-import-edges.patch
+	source = 0005-data-flow-empty-target-message.patch
+	sha256sums = SKIP
+	sha256sums = ab71331d82a370cef33ff5c0fe90584c77e0613398c2b3d043112362def949de
+	sha256sums = b2d0f8aeef7f2459a9867828157291a627f26cb417f510179aa6ed7e7d23e32e
+	sha256sums = 362da295d59e3bbee9b3354d4c399152a258d59743013841a009c0ccb5b6abff
+	sha256sums = 2739586c3ea67100e72120e2ccc89dd61f1d53e8b5388bdee7ada448c460ed0d
+	sha256sums = 67cde057f7fc85583c7847cc698940af08268b89fcd2fa5e22f99c15a57cbfb4
+
+pkgname = trailmark-git

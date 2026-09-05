@@ -6,6 +6,8 @@
 /headroom-git/headroom-src/
 /tinbase-git/tinbase/
 /tinbase-git/tinbase-src/
+/trailmark-git/trailmark/
+/trailmark-git/trailmark-src/
 
 # Local agent state and worktrees
 /.claude/
@@ -19,6 +21,7 @@
 /python-installer/python-installer-*.tar.gz
 /python-tree-sitter-language-pack/tree-sitter-language-pack-*.tar.gz
 /python-tree-sitter-language-pack/parser-sources-*.tar.zst
+/python-tree-sitter025/tree-sitter-*.tar.gz
 *.log
 
 # Python build residue

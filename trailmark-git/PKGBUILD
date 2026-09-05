@@ -1,0 +1,180 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+
+pkgname=trailmark-git
+pkgver=0.5.0.r2.gf7e19d3
+pkgrel=1
+pkgdesc='Parse source code into a queryable graph of functions, classes, calls, and semantic annotations, with community fork patches'
+# Not 'any': this package ships two compiled tree-sitter grammar extensions.
+# See build() for why they must be compiled here rather than at first use.
+arch=('x86_64')
+url='https://github.com/trailofbits/trailmark'
+license=('Apache-2.0')
+options=('!debug')
+
+# python-tree-sitter is constrained to <0.26 on purpose. Under 0.26.0 the
+# Solidity parser faults on contracts of roughly 300+ functions, both
+# mid-traversal and during interpreter finalization; reproduced on unpatched
+# upstream f7e19d3, so it is not caused by the patches below. 0.26.0 is the
+# only 0.26.x release, so there is nothing newer to move to. This matches
+# upstream trailmark's own uv.lock, which pins tree-sitter ~=0.25.0 even
+# though pyproject.toml nominally allows <0.27.
+# The python-tree-sitter025 recipe in this repository satisfies this.
+depends=(
+  'glibc'
+  'python'
+  'python-tree-sitter>=0.25'
+  'python-tree-sitter<0.26'
+  'python-tree-sitter-language-pack>=1.9'
+  'python-tree-sitter-sql>=0.3.11'
+  'python-rustworkx>=0.17'
+)
+makedepends=(
+  'git'
+  'python-build'
+  'python-hatchling'
+  'python-installer'
+  'python-wheel'
+)
+checkdepends=(
+  'python-hypothesis'
+  'python-pytest'
+  'python-pytest-xdist'
+)
+provides=('trailmark')
+conflicts=('trailmark')
+
+# The commit is pinned deliberately. The patches below are generated against
+# this exact tree; tracking a moving main would make the build fail
+# non-deterministically at some future point.
+_commit='f7e19d3ee37c02ca4e897e1bb901fc4868888e21'
+_srcname='trailmark-src'
+_patches=(
+  '0001-solidity-state-web.patch'
+  '0002-java-vuln-poc-example.patch'
+  '0003-js-ts-router-entrypoints.patch'
+  '0004-js-ts-import-edges.patch'
+  '0005-data-flow-empty-target-message.patch'
+)
+
+source=(
+  "$_srcname::git+$url.git#commit=$_commit"
+  "${_patches[@]}"
+)
+sha256sums=(
+  'SKIP'
+  '8daf140e32827b823a01cbdc4b26eee7fc6c2d7f3cb701b7769776feb23811b8'
+  '23c791f95086061df413c04a11fa281372ef72c4ee9e77fb67fc7ab42b0e76b3'
+  '2432bca46c77c348fba87d365c9be8d202d83e95be6d27a4b7534b60f70b8e05'
+  '82e3eeb8716e073f2693dd6952134f19a7638611b748170c46f517342b91e7e1'
+  '67cde057f7fc85583c7847cc698940af08268b89fcd2fa5e22f99c15a57cbfb4'
+)
+
+# The -O2 in the upstream auto-build path is hardcoded inside a Python
+# function, so makepkg.conf CFLAGS cannot reach it -- build() invokes cc
+# directly instead, appending $CFLAGS/$LDFLAGS below so hardening flags still
+# apply. No -march here: arch=('x86_64') means this package must run on any
+# x86_64 host, not just the one it was built on.
+_grammar_cflags=(-O3 -flto -std=c11 -fPIC -shared)
+
+pkgver() {
+  cd "$srcdir/$_srcname"
+  git describe --long --tags --abbrev=7 \
+    | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "$srcdir/$_srcname"
+
+  # makepkg reuses $srcdir across runs, so reset to the pinned tree first;
+  # without this a second `makepkg -f` fails with "already exists in working
+  # directory" when the patches are re-applied on top of themselves.
+  git checkout -q --force "$_commit"
+  git clean -qfdx
+
+  # 0001 and 0002 are community fork work not yet merged upstream.
+  # 0003 through 0005 are authored downstream for this package -- they
+  # have no upstream provenance and are candidates to submit upstream.
+  #
+  # Of the six fork branches surveyed, four turned out to be already merged
+  # into f7e19d3 and are therefore not carried here:
+  #   hughpyle/public-parse-api                    -> upstream PRs #23,#24,#25,#26
+  #   alexander-heinrich/fix-file-scoped-namespace -> identical to main, empty diff
+  #   Tomer-PL/fix-preproc-recovery                -> upstream #35 (same patch-id)
+  #   Tomer-PL/fix-cross-file-call-linker          -> upstream #34 (same patch-id);
+  #     upstream additionally improved it in review, so re-applying would regress it.
+  #
+  # uv.lock hunks are stripped from the fork patches: this package builds
+  # against system dependencies and never reads the lockfile.
+  local _patch
+  for _patch in "${_patches[@]}"; do
+    git apply "$srcdir/$_patch"
+  done
+}
+
+build() {
+  cd "$srcdir/$_srcname"
+
+  python -m build --wheel --no-isolation
+
+  # The vendored circom and masm grammars normally compile themselves on first
+  # use, shelling out to cc and writing _binding<EXT_SUFFIX>.so next to the
+  # installed module -- i.e. into /usr/lib/python3.x/site-packages. Under a
+  # packaged install that fails outright for non-root users and would leave
+  # files in /usr that pacman does not own. Compile them here instead.
+  #
+  # .gitignore excludes these .so files and hatchling honours it, so they are
+  # absent from the wheel by design and get installed separately in package().
+  #
+  # Compiling here also removes a race: pytest-xdist workers would otherwise
+  # each trigger the auto-build concurrently and truncate the shared .so.
+  local _inc _ext _dir _grammar
+  _inc="$(python -c 'import sysconfig; print(sysconfig.get_path("include"))')"
+  _ext="$(python -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
+
+  for _grammar in circom masm; do
+    _dir="src/trailmark/tree_sitter_custom/$_grammar"
+    cc "${_grammar_cflags[@]}" $CFLAGS \
+      -I"$_inc" -I"$_dir/src" \
+      "$_dir/binding.c" "$_dir/src/parser.c" \
+      -o "$_dir/_binding$_ext" $LDFLAGS
+  done
+}
+
+check() {
+  cd "$srcdir/$_srcname"
+  # Children spawned by tests/test_native_stability.py need to inherit this.
+  export PYTHONPATH="$PWD/src"
+  python -m pytest -q -p no:cacheprovider -n auto tests/
+}
+
+package() {
+  cd "$srcdir/$_srcname"
+
+  local _site _ext _grammar
+  _site="$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+  _ext="$(python -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
+
+  python -m installer --destdir="$pkgdir" dist/*.whl
+
+  for _grammar in circom masm; do
+    install -Dm755 "src/trailmark/tree_sitter_custom/$_grammar/_binding$_ext" \
+      "$pkgdir$_site/trailmark/tree_sitter_custom/$_grammar/_binding$_ext"
+  done
+
+  # Java third-party library vulnerability PoC, from the IOJedi fork.
+  # Modes are reset explicitly: cp would otherwise carry over the setgid bit
+  # from the build directory. The mode must be given as four digits -- GNU
+  # chmod deliberately preserves a directory's setgid bit for three-digit
+  # modes, so `chmod 755` would leave it in place.
+  install -d "$pkgdir/usr/share/doc/trailmark"
+  cp -r examples "$pkgdir/usr/share/doc/trailmark/examples"
+  find "$pkgdir/usr/share/doc/trailmark" -type d -exec chmod 00755 {} +
+  find "$pkgdir/usr/share/doc/trailmark" -type f -exec chmod 00644 {} +
+
+  # Precompile at every optimisation level so that no interpreter invocation
+  # -- plain, -O or -OO -- tries to write .pyc into /usr at runtime.
+  python -m compileall -o 0 -o 1 -o 2 -q -s "$pkgdir" -p / "$pkgdir$_site/trailmark"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 NOTICE "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
+}

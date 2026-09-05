@@ -1,0 +1,312 @@
+diff --git a/src/trailmark/parsers/_common.py b/src/trailmark/parsers/_common.py
+index 1080c6a..242dedb 100644
+--- a/src/trailmark/parsers/_common.py
++++ b/src/trailmark/parsers/_common.py
+@@ -87,6 +87,102 @@ def _escape_module_path_part(part: str) -> str:
+     return part.replace("\\", "\\\\").replace(".", "\\.")
+ 
+ 
++# Extensions a relative JS/TS specifier may resolve to, in the order the
++# TypeScript and Node ESM resolvers try them.
++_JS_MODULE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
++
++# ESM/NodeNext requires import specifiers to carry the *emitted* extension,
++# so `./foo.js` routinely refers to `foo.ts` on disk.
++_JS_EMITTED_TO_SOURCE = {
++    ".js": (".ts", ".tsx"),
++    ".mjs": (".mts",),
++    ".cjs": (".cts",),
++    ".jsx": (".tsx",),
++}
++
++
++def resolve_relative_module_id(importer_path: str, specifier: str) -> str | None:
++    """Resolve a relative JS/TS import specifier to a module ID.
++
++    Returns ``None`` -- meaning "do not emit an import edge" -- unless all
++    of the following hold:
++
++    - the specifier is relative (``./x`` or ``../x``). Bare specifiers name
++      external packages, which belong in ``graph.dependencies`` rather than
++      as graph edges pointing at nodes that will never exist;
++    - a directory parse is in progress. Single-file parsing derives module
++      IDs from the bare filename stem, so a cross-file edge could not
++      address anything;
++    - the specifier resolves to a file that actually exists on disk and
++      lies under the directory-parse root.
++
++    The returned ID comes from :func:`module_id_from_path`, so it matches
++    the MODULE node the target file produces, escaping included.
++    """
++    if not specifier.startswith("."):
++        return None
++    root = _DIRECTORY_PARSE_ROOT.get()
++    if root is None:
++        return None
++
++    base = _absolute_lexical_path(Path(importer_path)).parent
++    target = Path(os.path.normpath(base / specifier))
++
++    resolved = _first_existing_module_file(target)
++    if resolved is None:
++        return None
++    try:
++        resolved.relative_to(root)
++    except ValueError:
++        return None
++    return module_id_from_path(str(resolved))
++
++
++def _first_existing_module_file(target: Path) -> Path | None:
++    """Return the first on-disk file a resolved specifier can refer to."""
++    if target.is_file():
++        return target
++    for suffix in _JS_MODULE_SUFFIXES:
++        candidate = target.with_name(target.name + suffix)
++        if candidate.is_file():
++            return candidate
++    for source_suffix in _JS_EMITTED_TO_SOURCE.get(target.suffix, ()):
++        candidate = target.with_suffix(source_suffix)
++        if candidate.is_file():
++            return candidate
++    for suffix in _JS_MODULE_SUFFIXES:
++        candidate = target / f"index{suffix}"
++        if candidate.is_file():
++            return candidate
++    return None
++
++
++def add_import_edge(
++    graph: CodeGraph,
++    module_id: str,
++    importer_path: str,
++    specifier: str,
++) -> None:
++    """Add a MODULE -> MODULE IMPORTS edge for a relative specifier.
++
++    No-op for anything :func:`resolve_relative_module_id` declines, for
++    self-imports, and for a specifier already recorded for this module --
++    re-importing the same file on several lines is one dependency, not
++    several edges.
++    """
++    target_id = resolve_relative_module_id(importer_path, specifier)
++    if target_id is None or target_id == module_id:
++        return
++    for edge in graph.edges:
++        if (
++            edge.kind == EdgeKind.IMPORTS
++            and edge.source_id == module_id
++            and edge.target_id == target_id
++        ):
++            return
++    graph.edges.append(CodeEdge(source_id=module_id, target_id=target_id, kind=EdgeKind.IMPORTS))
++
++
+ _EXCLUDED_DIRS = frozenset(
+     {
+         ".git",
+diff --git a/src/trailmark/parsers/javascript/parser.py b/src/trailmark/parsers/javascript/parser.py
+index eefea24..c4231a2 100644
+--- a/src/trailmark/parsers/javascript/parser.py
++++ b/src/trailmark/parsers/javascript/parser.py
+@@ -18,6 +18,7 @@ from trailmark.models.nodes import (
+ )
+ from trailmark.parsers._common import (
+     add_contains_edge,
++    add_import_edge,
+     add_module_node,
+     collect_body_info,
+     compute_complexity,
+@@ -102,8 +103,9 @@ def _visit_top_level_node(
+     elif child.type == "class_declaration":
+         _extract_class(child, file_path, module_id, graph)
+     elif child.type == "import_statement":
+-        _extract_import(child, graph)
++        _extract_import(child, file_path, module_id, graph)
+     elif child.type == "export_statement":
++        _extract_import(child, file_path, module_id, graph)
+         _visit_export(child, file_path, module_id, graph)
+     elif child.type in (
+         "lexical_declaration",
+@@ -580,12 +582,24 @@ def _resolve_call_target(
+     return call_name
+ 
+ 
+-def _extract_import(node: Node, graph: CodeGraph) -> None:
+-    """Extract import statements as dependency info."""
++def _extract_import(
++    node: Node,
++    file_path: str,
++    module_id: str,
++    graph: CodeGraph,
++) -> None:
++    """Record an import: external package name and, when the specifier is
++    relative and resolves within the parsed tree, a MODULE -> MODULE edge.
++
++    Also called for ``export ... from "./x"`` re-exports, which are import
++    relationships too. A plain ``export { a }`` has no string child and is
++    ignored here.
++    """
+     for child in node.children:
+         if child.type == "string":
+             module_name = _strip_quotes(node_text(child))
+             _add_dependency(module_name, graph)
++            add_import_edge(graph, module_id, file_path, module_name)
+             return
+ 
+ 
+diff --git a/src/trailmark/parsers/typescript/parser.py b/src/trailmark/parsers/typescript/parser.py
+index ea1c490..f6994c3 100644
+--- a/src/trailmark/parsers/typescript/parser.py
++++ b/src/trailmark/parsers/typescript/parser.py
+@@ -18,6 +18,7 @@ from trailmark.models.nodes import (
+ )
+ from trailmark.parsers._common import (
+     add_contains_edge,
++    add_import_edge,
+     add_module_node,
+     collect_body_info,
+     compute_complexity,
+@@ -110,8 +111,9 @@ def _visit_top_level_node(
+     elif child.type == "enum_declaration":
+         _extract_enum(child, file_path, module_id, graph)
+     elif child.type == "import_statement":
+-        _extract_import(child, graph)
++        _extract_import(child, file_path, module_id, graph)
+     elif child.type == "export_statement":
++        _extract_import(child, file_path, module_id, graph)
+         _visit_export(child, file_path, module_id, graph)
+     elif child.type in (
+         "lexical_declaration",
+@@ -952,12 +954,24 @@ def _resolve_call_target(
+     return call_name
+ 
+ 
+-def _extract_import(node: Node, graph: CodeGraph) -> None:
+-    """Extract import statements as dependency info."""
++def _extract_import(
++    node: Node,
++    file_path: str,
++    module_id: str,
++    graph: CodeGraph,
++) -> None:
++    """Record an import: external package name and, when the specifier is
++    relative and resolves within the parsed tree, a MODULE -> MODULE edge.
++
++    Also called for ``export ... from "./x"`` re-exports, which are import
++    relationships too. A plain ``export { a }`` has no string child and is
++    ignored here.
++    """
+     for child in node.children:
+         if child.type == "string":
+             module_name = _strip_quotes(node_text(child))
+             _add_dependency(module_name, graph)
++            add_import_edge(graph, module_id, file_path, module_name)
+             return
+ 
+ 
+diff --git a/tests/test_common_parser.py b/tests/test_common_parser.py
+index 49af2a6..99679e7 100644
+--- a/tests/test_common_parser.py
++++ b/tests/test_common_parser.py
+@@ -319,3 +319,100 @@ def test_cross_file_linker_keeps_ambiguous_cross_file_calls_unresolved(
+     assert len(call_edges) == 1
+     assert call_edges[0].target_id == "proxy.unresolved:ambiguous_caller:shared_name"
+     assert call_edges[0].confidence == EdgeConfidence.UNCERTAIN
++
++
++# ── Relative-import resolution (JS / TS) ─────────────────────────
++
++
++def _ts_import_edges(root: Path) -> set[tuple[str, str]]:
++    """Parse ``root`` as TypeScript and return its IMPORTS edges."""
++    from trailmark.parse import parse_directory as parse_tree
++
++    graph = parse_tree(str(root), "typescript")
++    return {(e.source_id, e.target_id) for e in graph.edges if e.kind == EdgeKind.IMPORTS}
++
++
++def test_relative_import_creates_module_edge(tmp_path: Path) -> None:
++    (tmp_path / "lib").mkdir()
++    (tmp_path / "lib" / "crypto.ts").write_text("export function seal(): void {}\n")
++    (tmp_path / "app.ts").write_text('import { seal } from "./lib/crypto";\n')
++
++    assert ("app", "lib.crypto") in _ts_import_edges(tmp_path)
++
++
++def test_bare_specifier_creates_no_edge(tmp_path: Path) -> None:
++    """External packages belong in dependencies, not as dangling edges."""
++    (tmp_path / "app.ts").write_text('import { Hono } from "hono";\n')
++
++    assert _ts_import_edges(tmp_path) == set()
++
++
++def test_unresolvable_relative_import_creates_no_edge(tmp_path: Path) -> None:
++    (tmp_path / "app.ts").write_text('import { gone } from "./missing";\n')
++
++    assert _ts_import_edges(tmp_path) == set()
++
++
++def test_directory_import_resolves_to_index_file(tmp_path: Path) -> None:
++    (tmp_path / "lib").mkdir()
++    (tmp_path / "lib" / "index.ts").write_text("export function seal(): void {}\n")
++    (tmp_path / "app.ts").write_text('import { seal } from "./lib";\n')
++
++    assert ("app", "lib.index") in _ts_import_edges(tmp_path)
++
++
++def test_emitted_js_extension_resolves_to_typescript_source(tmp_path: Path) -> None:
++    """NodeNext ESM writes `./x.js` for a file that is `x.ts` on disk."""
++    (tmp_path / "helper.ts").write_text("export function help(): void {}\n")
++    (tmp_path / "app.ts").write_text('import { help } from "./helper.js";\n')
++
++    assert ("app", "helper") in _ts_import_edges(tmp_path)
++
++
++def test_re_export_creates_import_edge(tmp_path: Path) -> None:
++    (tmp_path / "helper.ts").write_text("export function help(): void {}\n")
++    (tmp_path / "app.ts").write_text('export { help } from "./helper";\n')
++
++    assert ("app", "helper") in _ts_import_edges(tmp_path)
++
++
++def test_repeated_import_of_same_module_yields_one_edge(tmp_path: Path) -> None:
++    """``_ts_import_edges`` returns a set, which would hide a duplicate edge
++    even if ``add_import_edge`` appended one twice -- count raw graph edges
++    instead so this can actually fail."""
++    from trailmark.parse import parse_directory as parse_tree
++
++    (tmp_path / "helper.ts").write_text("export function a(): void {}\n")
++    (tmp_path / "app.ts").write_text(
++        'import { a } from "./helper";\nimport type { B } from "./helper";\n'
++    )
++
++    graph = parse_tree(str(tmp_path), "typescript")
++    edges = [
++        e
++        for e in graph.edges
++        if e.kind == EdgeKind.IMPORTS and (e.source_id, e.target_id) == ("app", "helper")
++    ]
++    assert len(edges) == 1
++
++
++def test_import_outside_parse_root_creates_no_edge(tmp_path: Path) -> None:
++    """A file above the parsed root has no MODULE node to point at."""
++    (tmp_path / "outside.ts").write_text("export function out(): void {}\n")
++    inner = tmp_path / "inner"
++    inner.mkdir()
++    (inner / "app.ts").write_text('import { out } from "../outside";\n')
++
++    assert _ts_import_edges(inner) == set()
++
++
++def test_single_file_parse_creates_no_import_edge(tmp_path: Path) -> None:
++    """Single-file module IDs are bare stems, so cross-file edges cannot address."""
++    from trailmark.parse import parse_file
++
++    (tmp_path / "helper.ts").write_text("export function help(): void {}\n")
++    app = tmp_path / "app.ts"
++    app.write_text('import { help } from "./helper";\n')
++
++    graph = parse_file(str(app), "typescript")
++    assert [e for e in graph.edges if e.kind == EdgeKind.IMPORTS] == []

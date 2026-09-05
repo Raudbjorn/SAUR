@@ -1,0 +1,20 @@
+pkgbase = python-tree-sitter025
+	pkgdesc = Python bindings for tree-sitter, pinned to the 0.25.x series
+	pkgver = 0.25.2
+	pkgrel = 1
+	url = https://github.com/tree-sitter/py-tree-sitter
+	arch = x86_64
+	license = MIT
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = glibc
+	depends = python
+	provides = python-tree-sitter=0.25.2
+	conflicts = python-tree-sitter
+	options = !debug
+	source = https://files.pythonhosted.org/packages/source/t/tree-sitter/tree-sitter-0.25.2.tar.gz
+	sha256sums = fe43c158555da46723b28b52e058ad444195afd1db3ca7720c59a254544e9c20
+
+pkgname = python-tree-sitter025

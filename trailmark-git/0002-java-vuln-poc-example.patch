@@ -1,0 +1,1505 @@
+diff --git a/examples/java-vuln-poc/README.md b/examples/java-vuln-poc/README.md
+new file mode 100644
+index 0000000..81de4ee
+--- /dev/null
++++ b/examples/java-vuln-poc/README.md
+@@ -0,0 +1,185 @@
++# Java 3rd-Party Library Vulnerability PoC
++
++This example demonstrates how to use **Trailmark** to find and remediate
++third-party library vulnerabilities in a Java Spring Boot application by
++building a call graph, tracing attack paths from HTTP entrypoints to
++vulnerable library sinks, and diffing a patched version against the original.
++
++## Vulnerabilities demonstrated
++
++| CVE | Name | Library | CVSS |
++|-----|------|---------|------|
++| CVE-2021-44228 | Log4Shell | log4j-core 2.14.1 | 10.0 |
++| CVE-2021-45046 | Log4Shell bypass | log4j-core 2.15.0 | 9.0 |
++| CVE-2022-42889 | Text4Shell | commons-text 1.9 | 9.8 |
++| CVE-2022-42003 | Jackson resource exhaustion | jackson-databind 2.13.3 | 7.5 |
++| CVE-2022-42004 | Jackson resource exhaustion (2) | jackson-databind 2.13.3 | 7.5 |
++| CVE-2022-22965 | Spring4Shell | Spring Boot 2.6.3 | 9.8 |
++
++## Project layout
++
++```
++java-vuln-poc/
++  vulnerable-app/           # Spring Boot app with intentionally vulnerable dependencies
++    pom.xml.example         # Maven config showing vulnerable library versions
++                            # (named .example so scanners don't treat it as a real manifest)
++    src/main/java/
++      VulnApp.java          # Application entry point
++      controller/
++        UserController.java # Spring MVC REST endpoints (HTTP entrypoints)
++      service/
++        UserService.java    # Jackson deserialization (CVE-2022-42003/42004)
++        ReportService.java  # Commons-Text StringSubstitutor (Text4Shell)
++      util/
++        LoggingUtil.java    # Log4j logger calls (Log4Shell)
++
++  remediated-app/           # Same app with all dependencies patched
++    pom.xml.example         # Patched library versions
++    src/main/java/          # Same structure; code-level fixes where applicable
++
++  analysis/
++    analyze.py          # Trailmark analysis script (the main PoC driver)
++    cve_database.json   # Static CVE records keyed by import prefix
++```
++
++## How it works
++
++The analysis script (`analysis/analyze.py`) runs seven phases:
++
++```
++Phase 1 — Parse          Parse Java source → Trailmark CodeGraph
++Phase 2 — CVE match      Cross-reference graph.dependencies against CVE DB
++Phase 3 — Path tracing   entrypoint_paths_to(vulnerable_sink) for each CVE
++Phase 4 — Preanalysis    blast_radius, taint_propagation, privilege_boundary
++Phase 5 — Attack surface Enumerate Spring MVC endpoints as untrusted entrypoints
++Phase 6 — Diff           diff_against() to compare vulnerable vs. remediated
++Phase 7 — Report         Human-readable remediation summary
++```
++
++### Key Trailmark APIs used
++
++| API | Purpose |
++|-----|---------|
++| `QueryEngine.from_directory(path, language="java")` | Parse Java source into a call graph |
++| `engine.summary()` | Get node counts, call edges, imported packages |
++| `engine.attack_surface()` | List Spring MVC endpoints tagged as HTTP entrypoints |
++| `engine.entrypoint_paths_to(sink)` | Trace call paths from HTTP endpoints to a vulnerable method |
++| `engine.annotate(node, FINDING, description)` | Mark a node as a finding on the graph |
++| `engine.findings()` | Retrieve all annotated findings |
++| `engine.preanalysis()` | Run blast-radius, taint, and privilege-boundary passes |
++| `engine.subgraph("high_blast_radius")` | Nodes with the most downstream impact |
++| `rem_engine.diff_against(vuln_engine)` | Structural diff: nodes/edges/entrypoints added or removed |
++
++## Running the PoC
++
++**Prerequisites:** Python ≥ 3.12, [uv](https://docs.astral.sh/uv/).
++
++```bash
++# From the repository root — install Trailmark and its dependencies
++uv sync --all-groups
++
++# Run the full analysis (defaults to the bundled vulnerable/remediated apps)
++uv run python examples/java-vuln-poc/analysis/analyze.py
++```
++
++To point the script at different directories:
++
++```bash
++uv run python examples/java-vuln-poc/analysis/analyze.py \
++    --vulnerable path/to/your/project/src \
++    --remediated path/to/your/patched/project/src
++```
++
++## Expected output (abbreviated)
++
++```
++╔══════════════════════════════════════════════════════════════════════╗
++║   Trailmark PoC — Java 3rd-Party Library Vulnerability Analysis      ║
++╚══════════════════════════════════════════════════════════════════════╝
++
++════════════════════════════════════════════════════════════════════════
++  Phase 1 — Parse vulnerable Java project
++════════════════════════════════════════════════════════════════════════
++  Parsing: .../vulnerable-app/src/main/java
++  Graph: 14 nodes, 12 call edges, 3 entrypoints detected
++
++────────────────────────────────────────────────────────────────────────
++  Phase 2 — Match imported packages against CVE database
++────────────────────────────────────────────────────────────────────────
++  Detected Java imports (7):
++    com.fasterxml.jackson.databind
++    org.apache.commons.text
++    org.apache.logging.log4j
++    ...
++
++  ⚠️  6 CVE(s) matched:
++
++  🔴 [CRITICAL] CVE-2021-44228 — Log4Shell
++       Matched import             : org.apache.logging.log4j
++       Affects                    : 2.0-beta9 to 2.14.1
++       Fixed in                   : 2.17.1
++       CVSS score                 : 10.0
++  ...
++
++────────────────────────────────────────────────────────────────────────
++  Phase 3 — Trace call paths from HTTP entrypoints to vulnerable sinks
++────────────────────────────────────────────────────────────────────────
++
++  🔴 CVE-2021-44228 — Log4Shell [CRITICAL]
++
++    Vulnerable sink  : logger.info
++    Entrypoint paths : 2 path(s) found
++
++      Path 1: controller/UserController:getUser → util/LoggingUtil:logAccess → logger.info
++      Path 2: controller/UserController:importUser → util/LoggingUtil:logError → logger.error
++
++    Annotated 6 node(s) with FINDING on the graph.
++  ...
++
++════════════════════════════════════════════════════════════════════════
++  Phase 7 — Remediation Report
++════════════════════════════════════════════════════════════════════════
++
++  Summary: 3 CVE(s) with reachable call paths (7 total path(s) from HTTP entrypoints)
++
++🔴 CVE-2021-44228 — Log4Shell  [CRITICAL  CVSS 10.0]
++   Import    : org.apache.logging.log4j
++   Affects   : 2.0-beta9 to 2.14.1
++   Fixed in  : 2.17.1
++   Fix       : Upgrade log4j-core to 2.17.1 or later. ...
++  ...
++```
++
++## Remediation guidance
++
++Each vulnerability has a specific fix reflected in `remediated-app/pom.xml.example`:
++
++| Library | Vulnerable | Patched |
++|---------|-----------|---------|
++| `log4j-core` | 2.14.1 | **2.17.2** |
++| `commons-text` | 1.9 | **1.10.0** |
++| `jackson-databind` | 2.13.3 | **2.13.4.2** |
++| `spring-boot-starter-parent` | 2.6.3 | **2.6.6** |
++
++> **Note:** Both `pom.xml.example` files are named with the `.example` suffix so that
++> Maven and dependency-advisory scanners do not treat them as real project manifests.
++> They are documentation artefacts only — neither app is meant to be built or deployed.
++
++Code-level changes in the remediated app:
++
++- `UserService.deserializeUser`: return type narrowed from `Object` to `Map<String, Object>`;
++  `enableDefaultTyping` removed.
++- `UserController.importUser`: error log no longer passes raw user payload to the logger.
++
++## Extending the PoC
++
++- **Add more CVEs**: extend `analysis/cve_database.json` with additional import
++  prefixes and vulnerable call patterns.
++- **Integrate SARIF**: run a static analyser (e.g. SpotBugs, Semgrep) and pass
++  the output to `engine.augment_sarif("results.sarif")` to merge external
++  findings into the Trailmark graph.
++- **Custom entrypoints**: if your framework is not auto-detected, add
++  `.trailmark/entrypoints.toml` to the project root (see the main README for
++  syntax).
++- **Automate in CI**: wrap `analyze.py` in a GitHub Actions step; fail the
++  build when `all_findings` is non-empty.
+diff --git a/examples/java-vuln-poc/analysis/analyze.py b/examples/java-vuln-poc/analysis/analyze.py
+new file mode 100644
+index 0000000..9006452
+--- /dev/null
++++ b/examples/java-vuln-poc/analysis/analyze.py
+@@ -0,0 +1,566 @@
++#!/usr/bin/env python3
++"""
++Trailmark PoC: Java 3rd-Party Library Vulnerability Finder & Remediator
++========================================================================
++
++Demonstrates how to use Trailmark to:
++
++1. Parse a Java project into a queryable call graph.
++2. Cross-reference imported packages against a static CVE database.
++3. Trace call paths from HTTP entrypoints to vulnerable library call sites.
++4. Annotate findings on the graph and run preanalysis (blast radius, taint).
++5. Diff the vulnerable graph against a remediated version.
++6. Emit a human-readable remediation report.
++
++Usage
++-----
++From the repository root (after `uv sync --all-groups`):
++
++    uv run python examples/java-vuln-poc/analysis/analyze.py
++
++Or, to target arbitrary directories:
++
++    uv run python examples/java-vuln-poc/analysis/analyze.py \\
++        --vulnerable  path/to/vulnerable-app/src \\
++        --remediated  path/to/remediated-app/src
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from pathlib import Path
++from typing import Any
++
++from trailmark.models.annotations import AnnotationKind
++from trailmark.models.graph import CodeGraph
++from trailmark.query.api import QueryEngine
++
++# ---------------------------------------------------------------------------
++# Paths (relative to this script)
++# ---------------------------------------------------------------------------
++_SCRIPT_DIR = Path(__file__).parent
++_POC_ROOT = _SCRIPT_DIR.parent
++_CVE_DB_PATH = _SCRIPT_DIR / "cve_database.json"
++
++_DEFAULT_VULNERABLE = _POC_ROOT / "vulnerable-app" / "src" / "main" / "java"
++_DEFAULT_REMEDIATED = _POC_ROOT / "remediated-app" / "src" / "main" / "java"
++
++# ---------------------------------------------------------------------------
++# CVE database helpers
++# ---------------------------------------------------------------------------
++
++
++def load_cve_db(path: Path) -> dict[str, list[dict[str, Any]]]:
++    with open(path) as f:
++        return json.load(f)
++
++
++def scan_imports(src_dir: Path) -> set[str]:
++    """Scan Java source files for full import paths.
++
++    Returns the set of fully-qualified import prefixes found, e.g.
++    ``{"org.apache.logging.log4j", "com.fasterxml.jackson", ...}``.
++    Trailmark's graph.dependencies only stores the top-level package name
++    (e.g. ``"org"``); this function provides finer-grained resolution needed
++    for accurate CVE matching.
++    """
++    imports: set[str] = set()
++    for java_file in src_dir.rglob("*.java"):
++        for line in java_file.read_text(errors="replace").splitlines():
++            stripped = line.strip()
++            if stripped.startswith("import ") and stripped.endswith(";"):
++                fqn = stripped[len("import ") : -1].strip()
++                # Remove trailing class name (last component) so we keep the
++                # package path, e.g. org.apache.logging.log4j.LogManager
++                # → org.apache.logging.log4j
++                parts = fqn.rsplit(".", 1)
++                if len(parts) == 2:
++                    imports.add(parts[0])
++                else:
++                    imports.add(fqn)
++    return imports
++
++
++def match_cves(
++    imports: set[str],
++    cve_db: dict[str, list[dict[str, Any]]],
++) -> list[dict[str, Any]]:
++    """Return CVE records for every import whose package prefix is in the DB."""
++    hits: list[dict[str, Any]] = []
++    seen_cves: set[str] = set()
++    for import_path in imports:
++        for prefix, cves in cve_db.items():
++            if prefix == "_comment":
++                continue
++            if import_path == prefix or import_path.startswith(prefix + "."):
++                for cve in cves:
++                    if cve["cve"] in seen_cves:
++                        continue
++                    seen_cves.add(cve["cve"])
++                    entry = dict(cve)
++                    entry["matched_import"] = import_path
++                    hits.append(entry)
++    return hits
++
++
++# ---------------------------------------------------------------------------
++# Graph building
++# ---------------------------------------------------------------------------
++
++
++def build_engine(src_dir: Path) -> QueryEngine:
++    """Parse a Java source directory into a Trailmark QueryEngine."""
++    print(f"  Parsing: {src_dir}")
++    engine = QueryEngine.from_directory(str(src_dir), language="java")
++    summary = engine.summary()
++    print(
++        f"  Graph: {summary['total_nodes']} nodes, "
++        f"{summary['call_edges']} call edges, "
++        f"{summary['entrypoints']} entrypoints detected"
++    )
++    return engine
++
++
++# ---------------------------------------------------------------------------
++# Vulnerability detection
++# ---------------------------------------------------------------------------
++
++
++def _method_name(node_id: str) -> str:
++    """Extract the bare method name from a node ID.
++
++    E.g. ``com.example.util.LoggingUtil:LoggingUtil.logAccess`` → ``logAccess``
++    """
++    # Format: module:ClassName.method  or  module:function
++    after_colon = node_id.split(":")[-1]
++    return after_colon.rsplit(".", 1)[-1]
++
++
++def _build_call_index(
++    graph: CodeGraph,
++) -> dict[str, list[str]]:
++    """Build a reverse index: method_name → [caller_node_ids].
++
++    For Java's inferred cross-file calls the edge target is a raw expression
++    like ``loggingUtil.logAccess``.  This index maps the method-name suffix
++    (e.g. ``logAccess``) to every node whose edge target ends with ``.logAccess``
++    or equals ``logAccess``, enabling name-based path resolution without
++    requiring full type inference.
++    """
++    from trailmark.models.edges import EdgeKind
++
++    index: dict[str, list[str]] = {}
++    for edge in graph.edges:
++        if edge.kind != EdgeKind.CALLS:
++            continue
++        target = edge.target_id
++        # Strip object prefix for dotted calls like "loggingUtil.logAccess"
++        method = target.rsplit(".", 1)[-1] if "." in target else target
++        index.setdefault(method, []).append(edge.source_id)
++    return index
++
++
++def find_vulnerable_callers(
++    engine: QueryEngine,
++    cve_record: dict[str, Any],
++) -> dict[str, list[list[str]]]:
++    """Find attack paths from HTTP entrypoints to vulnerable library sinks.
++
++    Strategy
++    --------
++    The Java parser models external library calls as edge *targets* — strings
++    like ``objectMapper.readValue`` — that are not themselves graph nodes.
++    Inferred cross-file calls (e.g. ``loggingUtil.logAccess``) also use
++    variable names rather than class names, so Trailmark's graph-traversal
++    primitives cannot resolve them automatically.
++
++    This function bridges the gap with a two-step name-based search:
++
++    1. Scan all CALLS edges whose target contains a vulnerable pattern to
++       identify the project's own functions that invoke the vulnerable sink
++       (e.g. ``LoggingUtil.logAccess`` → ``logger.info``).
++
++    2. Scan all CALLS edges whose target *ends with* the same method name
++       (e.g. ``.logAccess``) to find which other nodes call those functions.
++       Intersect with the detected HTTP entrypoints to build attack paths.
++
++    Returns a dict mapping the call pattern string to a list of call paths,
++    where each path is ``[entrypoint_id, ..., vulnerable_caller_id]``.
++    """
++    from trailmark.models.edges import EdgeKind
++
++    graph = engine._store._graph  # noqa: SLF001
++
++    entrypoint_ids = {ep["node_id"] for ep in engine.attack_surface()}
++
++    # Pre-build a method-name → [caller] index (all CALLS edges in the graph).
++    call_index = _build_call_index(graph)
++
++    results: dict[str, list[list[str]]] = {}
++
++    for call_pattern in cve_record.get("vulnerable_calls", []):
++        # Step 1 — find project nodes that directly invoke the vulnerable sink.
++        direct_callers: set[str] = set()
++        for edge in graph.edges:
++            if edge.kind == EdgeKind.CALLS and call_pattern in edge.target_id:
++                direct_callers.add(edge.source_id)
++
++        if not direct_callers:
++            continue
++
++        # Step 2 — for each direct caller, find HTTP entrypoints that can reach
++        # it.  We do a BFS backwards through the call-index up to 5 hops.
++        all_paths: list[list[str]] = []
++
++        for caller_id in sorted(direct_callers):
++            caller_method = _method_name(caller_id)
++            # Find nodes that call caller_id (by method name).
++            immediate_parents = set(call_index.get(caller_method, []))
++            # Filter to only nodes that exist in the graph.
++            immediate_parents = {p for p in immediate_parents if p in graph.nodes}
++
++            for parent_id in sorted(immediate_parents):
++                if parent_id in entrypoint_ids:
++                    all_paths.append([parent_id, caller_id])
++                else:
++                    # One more hop — check if *this* parent is called by an entrypoint.
++                    parent_method = _method_name(parent_id)
++                    grandparents = {
++                        gp
++                        for gp in call_index.get(parent_method, [])
++                        if gp in graph.nodes and gp in entrypoint_ids
++                    }
++                    for gp_id in sorted(grandparents):
++                        all_paths.append([gp_id, parent_id, caller_id])
++
++            # Also include direct entrypoint → caller paths when a single-hop
++            # edge exists (e.g. an entrypoint itself calls the vulnerable method).
++            for ep_id in entrypoint_ids:
++                ep_method_targets = {
++                    edge.target_id
++                    for edge in graph.edges
++                    if edge.kind == EdgeKind.CALLS and edge.source_id == ep_id
++                }
++                if caller_id in ep_method_targets:
++                    path = [ep_id, caller_id]
++                    if path not in all_paths:
++                        all_paths.append(path)
++
++        if all_paths:
++            results[call_pattern] = all_paths
++
++    return results
++
++
++def annotate_findings(
++    engine: QueryEngine,
++    cve_record: dict[str, Any],
++    callers_map: dict[str, list[list[str]]],
++) -> int:
++    """Add FINDING annotations to each node that is on a vulnerable path.
++
++    Every node in every path (entrypoint → ... → vulnerable caller) is
++    annotated so that ``engine.findings()`` surfaces the full blast of
++    affected code, not just the direct caller.
++    """
++    annotated = 0
++    cve_id = cve_record["cve"]
++    name = cve_record["name"]
++    severity = cve_record["severity"]
++
++    seen: set[str] = set()
++    for call_pattern, paths in callers_map.items():
++        for path in paths:
++            for node_id in path:
++                if node_id in seen:
++                    continue
++                seen.add(node_id)
++                desc = (
++                    f"{cve_id} ({name}) [{severity}]: "
++                    f"node is on a call path to vulnerable sink '{call_pattern}'. "
++                    f"Remediation: {cve_record['remediation']}"
++                )
++                added = engine.annotate(
++                    node_id,
++                    AnnotationKind.FINDING,
++                    desc,
++                    source="trailmark-vuln-poc",
++                )
++                if added:
++                    annotated += 1
++    return annotated
++
++
++# ---------------------------------------------------------------------------
++# Reporting helpers
++# ---------------------------------------------------------------------------
++
++SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
++SEVERITY_EMOJI = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢", "INFO": "⚪"}
++
++
++def _sep(char: str = "─", width: int = 72) -> str:
++    return char * width
++
++
++def print_header(title: str) -> None:
++    print(f"\n{'═' * 72}")
++    print(f"  {title}")
++    print(f"{'═' * 72}")
++
++
++def print_section(title: str) -> None:
++    print(f"\n{_sep()}")
++    print(f"  {title}")
++    print(_sep())
++
++
++def format_path(path: list[str]) -> str:
++    return " → ".join(path)
++
++
++# ---------------------------------------------------------------------------
++# Main analysis workflow
++# ---------------------------------------------------------------------------
++
++
++def run_analysis(
++    vulnerable_dir: Path,
++    remediated_dir: Path,
++) -> None:
++    cve_db = load_cve_db(_CVE_DB_PATH)
++
++    # ------------------------------------------------------------------
++    # Phase 1: Parse vulnerable app
++    # ------------------------------------------------------------------
++    print_header("Phase 1 — Parse vulnerable Java project")
++    vuln_engine = build_engine(vulnerable_dir)
++
++    # ------------------------------------------------------------------
++    # Phase 2: CVE matching
++    # ------------------------------------------------------------------
++    print_section("Phase 2 — Match imported packages against CVE database")
++
++    imports = scan_imports(vulnerable_dir)
++    print(f"  Detected Java imports ({len(imports)}):")
++    for imp in sorted(imports):
++        print(f"    {imp}")
++
++    matched_cves = match_cves(imports, cve_db)
++    matched_cves.sort(key=lambda c: SEVERITY_ORDER.get(c.get("severity", "INFO"), 99))
++
++    if not matched_cves:
++        print("  ✅  No known vulnerable packages detected.")
++    else:
++        print(f"\n  ⚠️  {len(matched_cves)} CVE(s) matched:\n")
++        for cve in matched_cves:
++            emoji = SEVERITY_EMOJI.get(cve["severity"], "⚪")
++            print(
++                f"  {emoji} [{cve['severity']}] {cve['cve']} — {cve['name']}\n"
++                f"       Matched import             : {cve['matched_import']}\n"
++                f"       Affects                    : {cve['affects_versions']}\n"
++                f"       Fixed in                   : {cve['fixed_version']}\n"
++                f"       CVSS score                 : {cve['cvss']}\n"
++            )
++
++    # ------------------------------------------------------------------
++    # Phase 3: Call-graph tracing & annotation
++    # ------------------------------------------------------------------
++    print_section("Phase 3 — Trace call paths from HTTP entrypoints to vulnerable sinks")
++
++    all_findings: list[dict[str, Any]] = []
++    for cve in matched_cves:
++        callers_map = find_vulnerable_callers(vuln_engine, cve)
++        if not callers_map:
++            print(
++                f"  [{cve['cve']}] No reachable call paths found for "
++                f"vulnerable calls: {cve.get('vulnerable_calls', [])}"
++            )
++            continue
++
++        annotated = annotate_findings(vuln_engine, cve, callers_map)
++
++        emoji = SEVERITY_EMOJI.get(cve["severity"], "⚪")
++        print(f"\n  {emoji} {cve['cve']} — {cve['name']} [{cve['severity']}]")
++        for call_pattern, paths in callers_map.items():
++            print(f"\n    Vulnerable sink  : {call_pattern}")
++            print(f"    Entrypoint paths : {len(paths)} path(s) found\n")
++            for i, path in enumerate(paths[:5], 1):
++                print(f"      Path {i}: {format_path(path)}")
++            if len(paths) > 5:
++                print(f"      ... and {len(paths) - 5} more path(s)")
++
++        print(f"\n    Annotated {annotated} node(s) with FINDING on the graph.")
++        all_findings.append(
++            {
++                "cve": cve,
++                "callers": callers_map,
++                "annotated_nodes": annotated,
++            }
++        )
++
++    # ------------------------------------------------------------------
++    # Phase 4: Preanalysis (blast radius, taint propagation)
++    # ------------------------------------------------------------------
++    print_section("Phase 4 — Preanalysis: blast radius & taint propagation")
++
++    preanalysis_result = vuln_engine.preanalysis()
++    br = preanalysis_result["blast_radius"]
++    tp = preanalysis_result["taint_propagation"]
++    ep = preanalysis_result["entrypoints"]
++
++    print(
++        f"  Blast radius  : {br['annotated_nodes']} nodes annotated, "
++        f"max radius = {br['max_radius']}, "
++        f"high-blast nodes = {br['high_blast_count']} (threshold ≥ {br['threshold']})"
++    )
++    print(
++        f"  Taint spread  : {tp['tainted_nodes']} nodes reachable from "
++        f"{tp['taint_sources']} untrusted entrypoint(s)"
++    )
++    print(
++        f"  Entrypoints   : {ep['total_entrypoints']} total, "
++        f"{ep['reachable_nodes']} reachable nodes"
++    )
++    print(f"  Trust breakdown: {ep['by_trust_level']}")
++
++    # Show high-blast-radius nodes that are also findings
++    high_blast = vuln_engine.subgraph("high_blast_radius")
++    finding_nodes = vuln_engine.findings(kind=AnnotationKind.FINDING)
++    finding_ids = {n["id"] for n in finding_nodes}
++    high_blast_findings = [n for n in high_blast if n["id"] in finding_ids]
++    if high_blast_findings:
++        print("\n  ⚠️  High-blast-radius nodes that are ALSO on a vulnerable path:")
++        for node in high_blast_findings:
++            print(f"      {node['id']}  (kind={node['kind']}, cc={node['cyclomatic_complexity']})")
++
++    # ------------------------------------------------------------------
++    # Phase 5: Attack surface
++    # ------------------------------------------------------------------
++    print_section("Phase 5 — Attack surface")
++
++    attack_surface = vuln_engine.attack_surface()
++    if not attack_surface:
++        print(
++            "  No entrypoints detected (add Spring MVC annotations or .trailmark/entrypoints.toml)."
++        )
++    else:
++        print(f"  {len(attack_surface)} detected entrypoint(s):\n")
++        for ep in sorted(attack_surface, key=lambda e: e["node_id"]):
++            print(
++                f"    • {ep['node_id']}\n"
++                f"      kind={ep['kind']}, trust={ep['trust_level']}, "
++                f"asset_value={ep['asset_value']}"
++            )
++
++    # ------------------------------------------------------------------
++    # Phase 6: Diff vulnerable vs remediated
++    # ------------------------------------------------------------------
++    print_section("Phase 6 — Diff: vulnerable vs. remediated")
++
++    print(f"  Parsing remediated app: {remediated_dir}")
++    rem_engine = build_engine(remediated_dir)
++
++    diff = rem_engine.diff_against(vuln_engine)
++    delta = diff.get("summary_delta", {})
++    nodes_diff = diff.get("nodes", {})
++    edges_diff = diff.get("edges", {})
++    ep_diff = diff.get("entrypoints", {})
++
++    print(f"\n  Node delta      : {delta}")
++    print(f"  Nodes added     : {len(nodes_diff.get('added', []))}")
++    print(f"  Nodes removed   : {len(nodes_diff.get('removed', []))}")
++    print(f"  Nodes modified  : {len(nodes_diff.get('modified', []))}")
++    print(f"  Edges added     : {len(edges_diff.get('added', []))}")
++    print(f"  Edges removed   : {len(edges_diff.get('removed', []))}")
++    print(
++        f"  Entrypoints added/removed/modified: "
++        f"{len(ep_diff.get('added', []))} / "
++        f"{len(ep_diff.get('removed', []))} / "
++        f"{len(ep_diff.get('modified', []))}"
++    )
++
++    # ------------------------------------------------------------------
++    # Phase 7: Remediation report
++    # ------------------------------------------------------------------
++    print_header("Phase 7 — Remediation Report")
++
++    if not all_findings:
++        print("  ✅  No call-graph-reachable vulnerabilities found. Nothing to remediate.")
++        return
++
++    total_cves = len(all_findings)
++    total_paths = sum(sum(len(paths) for paths in f["callers"].values()) for f in all_findings)
++    print(
++        f"  Summary: {total_cves} CVE(s) with reachable call paths "
++        f"({total_paths} total path(s) from HTTP entrypoints)\n"
++    )
++
++    for finding in all_findings:
++        cve = finding["cve"]
++        emoji = SEVERITY_EMOJI.get(cve["severity"], "⚪")
++        print(f"{emoji} {cve['cve']} — {cve['name']}  [{cve['severity']}  CVSS {cve['cvss']}]")
++        print(f"   Import    : {cve['matched_import']}")
++        print(f"   Affects   : {cve['affects_versions']}")
++        print(f"   Fixed in  : {cve['fixed_version']}")
++        print(f"   Fix       : {cve['remediation']}")
++        print()
++
++    print(_sep())
++    print("  Next steps:")
++    print("  1. Update your pom.xml / build.gradle with the patched versions above.")
++    print("     (See remediated-app/pom.xml.example for the complete patched config.)")
++    print("  2. Re-run this script against the patched source tree to confirm")
++    print("     call-graph paths to vulnerable sinks are gone.")
++    print("  3. Review annotated findings in the graph (engine.findings()) for")
++    print("     any business-logic paths that still flow through the affected API.")
++    print(_sep())
++
++
++# ---------------------------------------------------------------------------
++# Entry point
++# ---------------------------------------------------------------------------
++
++
++def _parse_args() -> argparse.Namespace:
++    parser = argparse.ArgumentParser(
++        description="Trailmark PoC: Java 3rd-party library vulnerability finder"
++    )
++    parser.add_argument(
++        "--vulnerable",
++        type=Path,
++        default=_DEFAULT_VULNERABLE,
++        help="Path to the vulnerable Java source directory",
++    )
++    parser.add_argument(
++        "--remediated",
++        type=Path,
++        default=_DEFAULT_REMEDIATED,
++        help="Path to the remediated Java source directory",
++    )
++    return parser.parse_args()
++
++
++def main() -> None:
++    args = _parse_args()
++
++    if not args.vulnerable.exists():
++        print(f"ERROR: vulnerable directory not found: {args.vulnerable}", file=sys.stderr)
++        sys.exit(1)
++    if not args.remediated.exists():
++        print(f"ERROR: remediated directory not found: {args.remediated}", file=sys.stderr)
++        sys.exit(1)
++
++    print("╔══════════════════════════════════════════════════════════════════════╗")
++    print("║   Trailmark PoC — Java 3rd-Party Library Vulnerability Analysis      ║")
++    print("╚══════════════════════════════════════════════════════════════════════╝")
++
++    run_analysis(args.vulnerable, args.remediated)
++
++    print("\n✅  Analysis complete.\n")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/examples/java-vuln-poc/analysis/cve_database.json b/examples/java-vuln-poc/analysis/cve_database.json
+new file mode 100644
+index 0000000..352e9f2
+--- /dev/null
++++ b/examples/java-vuln-poc/analysis/cve_database.json
+@@ -0,0 +1,77 @@
++{
++  "_comment": "Static snapshot of 3rd-party library CVEs used by the Trailmark PoC. Keys are full Java import prefixes.",
++  "org.apache.logging.log4j": [
++    {
++      "cve": "CVE-2021-44228",
++      "severity": "CRITICAL",
++      "cvss": 10.0,
++      "name": "Log4Shell",
++      "affects_versions": "2.0-beta9 to 2.14.1",
++      "fixed_version": "2.17.1",
++      "description": "A JNDI injection vulnerability in log4j-core allows unauthenticated remote code execution when a user-controlled string is logged.",
++      "vulnerable_calls": ["logger.info", "logger.error", "logger.warn", "logger.debug", "logger.fatal", "logger.trace"],
++      "remediation": "Upgrade log4j-core to 2.17.1 or later. If upgrading is not possible, set log4j2.formatMsgNoLookups=true or remove the JndiLookup class from the classpath."
++    },
++    {
++      "cve": "CVE-2021-45046",
++      "severity": "CRITICAL",
++      "cvss": 9.0,
++      "name": "Log4Shell bypass",
++      "affects_versions": "2.0-beta9 to 2.15.0",
++      "fixed_version": "2.17.1",
++      "description": "Incomplete fix for CVE-2021-44228 allows information disclosure and remote code execution via specially crafted lookup strings.",
++      "vulnerable_calls": ["logger.info", "logger.error", "logger.warn", "logger.debug"],
++      "remediation": "Upgrade log4j-core to 2.17.1 or later."
++    }
++  ],
++  "org.apache.commons.text": [
++    {
++      "cve": "CVE-2022-42889",
++      "severity": "CRITICAL",
++      "cvss": 9.8,
++      "name": "Text4Shell",
++      "affects_versions": "commons-text 1.5 to 1.9",
++      "fixed_version": "1.10.0",
++      "description": "Apache Commons Text's StringSubstitutor interpolates script://, dns://, and url:// lookup expressions in user-controlled strings, enabling remote code execution.",
++      "vulnerable_calls": ["StringSubstitutor.replace", "substitutor.replace"],
++      "remediation": "Upgrade commons-text to 1.10.0 or later."
++    }
++  ],
++  "com.fasterxml.jackson": [
++    {
++      "cve": "CVE-2022-42003",
++      "severity": "HIGH",
++      "cvss": 7.5,
++      "name": "Jackson Databind Resource Exhaustion",
++      "affects_versions": "jackson-databind < 2.13.4.2",
++      "fixed_version": "2.13.4.2",
++      "description": "Deep nesting of arrays/objects in WRAP_OBJECT_VALUE_AS_ARRAY deserialization mode can cause stack overflow / denial of service.",
++      "vulnerable_calls": ["objectMapper.readValue", "mapper.readValue"],
++      "remediation": "Upgrade jackson-databind to 2.13.4.2 or later."
++    },
++    {
++      "cve": "CVE-2022-42004",
++      "severity": "HIGH",
++      "cvss": 7.5,
++      "name": "Jackson Databind Resource Exhaustion (2)",
++      "affects_versions": "jackson-databind < 2.13.4.2",
++      "fixed_version": "2.13.4.2",
++      "description": "BeanDeserializer WITH_COERCION_CONFIG can be abused with crafted JSON to cause stack overflow / denial of service.",
++      "vulnerable_calls": ["objectMapper.readValue", "mapper.readValue"],
++      "remediation": "Upgrade jackson-databind to 2.13.4.2 or later."
++    }
++  ],
++  "org.springframework": [
++    {
++      "cve": "CVE-2022-22965",
++      "severity": "CRITICAL",
++      "cvss": 9.8,
++      "name": "Spring4Shell",
++      "affects_versions": "Spring Framework 5.3.0 to 5.3.17, 5.2.0 to 5.2.19",
++      "fixed_version": "5.3.18",
++      "description": "A Spring MVC or Spring WebFlux application running on JDK 9+ may be vulnerable to remote code execution via data binding.",
++      "vulnerable_calls": [],
++      "remediation": "Upgrade to Spring Framework 5.3.18+ or Spring Boot 2.6.6+. Apply WAF rules blocking 'class.*', 'Class.*', '*.class.*', '*.Class.*' parameter patterns."
++    }
++  ]
++}
+diff --git a/examples/java-vuln-poc/remediated-app/pom.xml.example b/examples/java-vuln-poc/remediated-app/pom.xml.example
+new file mode 100644
+index 0000000..12b4cbb
+--- /dev/null
++++ b/examples/java-vuln-poc/remediated-app/pom.xml.example
+@@ -0,0 +1,63 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project xmlns="http://maven.apache.org/POM/4.0.0"
++         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
++    <modelVersion>4.0.0</modelVersion>
++
++    <groupId>com.example</groupId>
++    <artifactId>vuln-app-remediated</artifactId>
++    <version>1.1.0</version>
++    <packaging>jar</packaging>
++
++    <name>Remediated Example App</name>
++    <description>Patched version of the vulnerable demo app.</description>
++
++    <parent>
++        <groupId>org.springframework.boot</groupId>
++        <artifactId>spring-boot-starter-parent</artifactId>
++        <!-- Patched: Spring Boot 2.6.6 brings Spring Framework 5.3.18 (fixes Spring4Shell) -->
++        <version>2.6.6</version>
++    </parent>
++
++    <dependencies>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-web</artifactId>
++        </dependency>
++
++        <!-- PATCHED: log4j-core 2.17.2 — not vulnerable to Log4Shell or related CVEs -->
++        <dependency>
++            <groupId>org.apache.logging.log4j</groupId>
++            <artifactId>log4j-core</artifactId>
++            <version>2.17.2</version>
++        </dependency>
++        <dependency>
++            <groupId>org.apache.logging.log4j</groupId>
++            <artifactId>log4j-api</artifactId>
++            <version>2.17.2</version>
++        </dependency>
++
++        <!-- PATCHED: commons-text 1.10.0 — fixes Text4Shell (CVE-2022-42889) -->
++        <dependency>
++            <groupId>org.apache.commons</groupId>
++            <artifactId>commons-text</artifactId>
++            <version>1.10.0</version>
++        </dependency>
++
++        <!-- PATCHED: jackson-databind 2.13.4.2 — fixes CVE-2022-42003/42004 -->
++        <dependency>
++            <groupId>com.fasterxml.jackson.core</groupId>
++            <artifactId>jackson-databind</artifactId>
++            <version>2.13.4.2</version>
++        </dependency>
++    </dependencies>
++
++    <build>
++        <plugins>
++            <plugin>
++                <groupId>org.springframework.boot</groupId>
++                <artifactId>spring-boot-maven-plugin</artifactId>
++            </plugin>
++        </plugins>
++    </build>
++</project>
+diff --git a/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/VulnApp.java b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/VulnApp.java
+new file mode 100644
+index 0000000..abef542
+--- /dev/null
++++ b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/VulnApp.java
+@@ -0,0 +1,11 @@
++package com.example.vulnapp;
++
++import org.springframework.boot.SpringApplication;
++import org.springframework.boot.autoconfigure.SpringBootApplication;
++
++@SpringBootApplication
++public class VulnApp {
++    public static void main(String[] args) {
++        SpringApplication.run(VulnApp.class, args);
++    }
++}
+diff --git a/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/controller/UserController.java b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/controller/UserController.java
+new file mode 100644
+index 0000000..a6e3996
+--- /dev/null
++++ b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/controller/UserController.java
+@@ -0,0 +1,75 @@
++package com.example.vulnapp.controller;
++
++import com.example.vulnapp.service.ReportService;
++import com.example.vulnapp.service.UserService;
++import com.example.vulnapp.util.LoggingUtil;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.http.ResponseEntity;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PathVariable;
++import org.springframework.web.bind.annotation.PostMapping;
++import org.springframework.web.bind.annotation.RequestBody;
++import org.springframework.web.bind.annotation.RequestMapping;
++import org.springframework.web.bind.annotation.RequestParam;
++import org.springframework.web.bind.annotation.RestController;
++
++import java.util.Map;
++
++/**
++ * REST controller exposing user management endpoints (patched version).
++ */
++@RestController
++@RequestMapping("/api/users")
++public class UserController {
++
++    @Autowired
++    private UserService userService;
++
++    @Autowired
++    private ReportService reportService;
++
++    @Autowired
++    private LoggingUtil loggingUtil;
++
++    /**
++     * Look up a user profile by username.
++     * PATCHED: username is sanitized before logging (no JNDI expansion possible).
++     */
++    @GetMapping("/{username}")
++    public ResponseEntity<Map<String, Object>> getUser(
++            @PathVariable String username) {
++        loggingUtil.logAccess(username);
++        Map<String, Object> user = userService.findUser(username);
++        if (user == null) {
++            return ResponseEntity.notFound().build();
++        }
++        return ResponseEntity.ok(user);
++    }
++
++    /**
++     * Generate a report from a user-supplied template string.
++     * PATCHED: commons-text 1.10.0 does not expand script:// or dns:// lookups.
++     */
++    @GetMapping("/report")
++    public ResponseEntity<String> generateReport(
++            @RequestParam String template) {
++        String result = reportService.renderTemplate(template);
++        return ResponseEntity.ok(result);
++    }
++
++    /**
++     * Import user data from a typed JSON payload.
++     * PATCHED: uses a specific DTO type, not raw Object deserialization.
++     */
++    @PostMapping("/import")
++    public ResponseEntity<String> importUser(
++            @RequestBody String rawJson) {
++        try {
++            Map<String, Object> parsed = userService.deserializeUser(rawJson);
++            return ResponseEntity.ok("Imported: " + parsed.get("name"));
++        } catch (Exception e) {
++            loggingUtil.logError("Import failed", e);
++            return ResponseEntity.badRequest().body("Invalid payload");
++        }
++    }
++}
+diff --git a/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/service/ReportService.java b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/service/ReportService.java
+new file mode 100644
+index 0000000..5d93c31
+--- /dev/null
++++ b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/service/ReportService.java
+@@ -0,0 +1,42 @@
++package com.example.vulnapp.service;
++
++import org.apache.commons.text.StringSubstitutor;
++import org.springframework.stereotype.Service;
++
++import java.util.HashMap;
++import java.util.Map;
++
++/**
++ * Generates text reports from templates (patched version).
++ *
++ * PATCHED: commons-text 1.10.0 removes the dangerous script:// and dns://
++ * interpolators by default, so user-controlled input is safe to pass to
++ * StringSubstitutor.replace().
++ */
++@Service
++public class ReportService {
++
++    private static final Map<String, String> CONTEXT = new HashMap<>();
++
++    static {
++        CONTEXT.put("appName", "VulnApp");
++        CONTEXT.put("version", "1.1");
++    }
++
++    /**
++     * Render a template string by substituting ${variable} placeholders.
++     * Safe on commons-text 1.10.0+.
++     */
++    public String renderTemplate(String template) {
++        StringSubstitutor substitutor = new StringSubstitutor(CONTEXT);
++        return substitutor.replace(template);
++    }
++
++    /**
++     * Build a standard usage report with static context.
++     */
++    public String buildUsageReport() {
++        return renderTemplate(
++                "App: ${appName} v${version} - Usage Report");
++    }
++}
+diff --git a/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/service/UserService.java b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/service/UserService.java
+new file mode 100644
+index 0000000..1f62986
+--- /dev/null
++++ b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/service/UserService.java
+@@ -0,0 +1,58 @@
++package com.example.vulnapp.service;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import com.fasterxml.jackson.databind.json.JsonMapper;
++import org.springframework.stereotype.Service;
++
++import java.util.HashMap;
++import java.util.Map;
++
++/**
++ * User business logic service (patched version).
++ */
++@Service
++public class UserService {
++
++    private static final Map<String, Map<String, Object>> USER_STORE = new HashMap<>();
++
++    static {
++        Map<String, Object> alice = new HashMap<>();
++        alice.put("name", "Alice");
++        alice.put("role", "admin");
++        USER_STORE.put("alice", alice);
++
++        Map<String, Object> bob = new HashMap<>();
++        bob.put("name", "Bob");
++        bob.put("role", "user");
++        USER_STORE.put("bob", bob);
++    }
++
++    /**
++     * PATCHED: Use JsonMapper with default safe configuration.
++     * Default typing is NOT enabled; the return type is a typed Map.
++     */
++    private final ObjectMapper objectMapper = JsonMapper.builder().build();
++
++    /**
++     * Find a user in the in-memory store.
++     */
++    public Map<String, Object> findUser(String username) {
++        return USER_STORE.get(username.toLowerCase());
++    }
++
++    /**
++     * Deserialize raw JSON into a typed Map, not a raw Object.
++     * PATCHED: no polymorphic type handling; gadget chains are not possible.
++     */
++    @SuppressWarnings("unchecked")
++    public Map<String, Object> deserializeUser(String rawJson) throws Exception {
++        return objectMapper.readValue(rawJson, Map.class);
++    }
++
++    /**
++     * Serialize a user map to JSON.
++     */
++    public String serializeUser(Map<String, Object> user) throws Exception {
++        return objectMapper.writeValueAsString(user);
++    }
++}
+diff --git a/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/util/LoggingUtil.java b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/util/LoggingUtil.java
+new file mode 100644
+index 0000000..35c377a
+--- /dev/null
++++ b/examples/java-vuln-poc/remediated-app/src/main/java/com/example/vulnapp/util/LoggingUtil.java
+@@ -0,0 +1,39 @@
++package com.example.vulnapp.util;
++
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
++import org.springframework.stereotype.Component;
++
++/**
++ * Centralised logging utility (patched version).
++ *
++ * PATCHED: log4j-core 2.17.2 has JNDI lookups disabled by default.
++ * The {} placeholder syntax never invokes JNDI regardless of content.
++ */
++@Component
++public class LoggingUtil {
++
++    private static final Logger logger = LogManager.getLogger(LoggingUtil.class);
++
++    /**
++     * Log an access event for the given identifier.
++     * Safe on log4j-core 2.17.2+: JNDI is disabled by default.
++     */
++    public void logAccess(String identifier) {
++        logger.info("Access by user: {}", identifier);
++    }
++
++    /**
++     * Log an error event (message sanitized by caller before this call).
++     */
++    public void logError(String message, Throwable cause) {
++        logger.error("Error - {}", message, cause);
++    }
++
++    /**
++     * Log a debug-level message.
++     */
++    public void logDebug(String detail) {
++        logger.debug("Debug: {}", detail);
++    }
++}
+diff --git a/examples/java-vuln-poc/vulnerable-app/pom.xml.example b/examples/java-vuln-poc/vulnerable-app/pom.xml.example
+new file mode 100644
+index 0000000..fa91113
+--- /dev/null
++++ b/examples/java-vuln-poc/vulnerable-app/pom.xml.example
+@@ -0,0 +1,66 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project xmlns="http://maven.apache.org/POM/4.0.0"
++         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
++    <modelVersion>4.0.0</modelVersion>
++
++    <groupId>com.example</groupId>
++    <artifactId>vuln-app</artifactId>
++    <version>1.0-SNAPSHOT</version>
++    <packaging>jar</packaging>
++
++    <name>Vulnerable Example App</name>
++    <description>
++        Intentionally vulnerable demo app for Trailmark PoC.
++        DO NOT deploy to production.
++    </description>
++
++    <parent>
++        <groupId>org.springframework.boot</groupId>
++        <artifactId>spring-boot-starter-parent</artifactId>
++        <!-- CVE-2022-22965 (Spring4Shell) affects Spring Framework < 5.3.18 -->
++        <version>2.6.3</version>
++    </parent>
++
++    <dependencies>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-web</artifactId>
++        </dependency>
++
++        <!-- CVE-2021-44228 (Log4Shell) - affects log4j-core 2.0-2.14.1 -->
++        <dependency>
++            <groupId>org.apache.logging.log4j</groupId>
++            <artifactId>log4j-core</artifactId>
++            <version>2.14.1</version>
++        </dependency>
++        <dependency>
++            <groupId>org.apache.logging.log4j</groupId>
++            <artifactId>log4j-api</artifactId>
++            <version>2.14.1</version>
++        </dependency>
++
++        <!-- CVE-2022-42889 (Text4Shell) - affects commons-text 1.5-1.9 -->
++        <dependency>
++            <groupId>org.apache.commons</groupId>
++            <artifactId>commons-text</artifactId>
++            <version>1.9</version>
++        </dependency>
++
++        <!-- CVE-2022-42003/CVE-2022-42004 - affects jackson-databind < 2.13.4.1 -->
++        <dependency>
++            <groupId>com.fasterxml.jackson.core</groupId>
++            <artifactId>jackson-databind</artifactId>
++            <version>2.13.3</version>
++        </dependency>
++    </dependencies>
++
++    <build>
++        <plugins>
++            <plugin>
++                <groupId>org.springframework.boot</groupId>
++                <artifactId>spring-boot-maven-plugin</artifactId>
++            </plugin>
++        </plugins>
++    </build>
++</project>
+diff --git a/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/VulnApp.java b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/VulnApp.java
+new file mode 100644
+index 0000000..abef542
+--- /dev/null
++++ b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/VulnApp.java
+@@ -0,0 +1,11 @@
++package com.example.vulnapp;
++
++import org.springframework.boot.SpringApplication;
++import org.springframework.boot.autoconfigure.SpringBootApplication;
++
++@SpringBootApplication
++public class VulnApp {
++    public static void main(String[] args) {
++        SpringApplication.run(VulnApp.class, args);
++    }
++}
+diff --git a/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/controller/UserController.java b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/controller/UserController.java
+new file mode 100644
+index 0000000..4f6d802
+--- /dev/null
++++ b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/controller/UserController.java
+@@ -0,0 +1,81 @@
++package com.example.vulnapp.controller;
++
++import com.example.vulnapp.service.ReportService;
++import com.example.vulnapp.service.UserService;
++import com.example.vulnapp.util.LoggingUtil;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.http.ResponseEntity;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PathVariable;
++import org.springframework.web.bind.annotation.PostMapping;
++import org.springframework.web.bind.annotation.RequestBody;
++import org.springframework.web.bind.annotation.RequestMapping;
++import org.springframework.web.bind.annotation.RequestParam;
++import org.springframework.web.bind.annotation.RestController;
++
++import java.util.Map;
++
++/**
++ * REST controller exposing user management endpoints.
++ * Vulnerable to Log4Shell, Text4Shell, and Jackson deserialization issues.
++ */
++@RestController
++@RequestMapping("/api/users")
++public class UserController {
++
++    @Autowired
++    private UserService userService;
++
++    @Autowired
++    private ReportService reportService;
++
++    @Autowired
++    private LoggingUtil loggingUtil;
++
++    private final ObjectMapper objectMapper = new ObjectMapper();
++
++    /**
++     * Look up a user profile by username.
++     * VULNERABILITY: username is passed directly to Log4j logger (Log4Shell).
++     */
++    @GetMapping("/{username}")
++    public ResponseEntity<Map<String, Object>> getUser(
++            @PathVariable String username) {
++        loggingUtil.logAccess(username);
++        Map<String, Object> user = userService.findUser(username);
++        if (user == null) {
++            return ResponseEntity.notFound().build();
++        }
++        return ResponseEntity.ok(user);
++    }
++
++    /**
++     * Generate a report from a user-supplied template string.
++     * VULNERABILITY: template is passed to Commons-Text StringSubstitutor
++     * (Text4Shell / CVE-2022-42889).
++     */
++    @GetMapping("/report")
++    public ResponseEntity<String> generateReport(
++            @RequestParam String template) {
++        String result = reportService.renderTemplate(template);
++        return ResponseEntity.ok(result);
++    }
++
++    /**
++     * Deserialize a raw JSON payload into an arbitrary Object.
++     * VULNERABILITY: polymorphic deserialization without type restrictions
++     * (CVE-2022-42003 / jackson-databind gadget chains).
++     */
++    @PostMapping("/import")
++    public ResponseEntity<String> importUser(
++            @RequestBody String rawJson) {
++        try {
++            Object parsed = userService.deserializeUser(rawJson);
++            return ResponseEntity.ok("Imported: " + parsed.toString());
++        } catch (Exception e) {
++            loggingUtil.logError("Import failed for payload: " + rawJson, e);
++            return ResponseEntity.badRequest().body("Invalid payload");
++        }
++    }
++}
+diff --git a/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/service/ReportService.java b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/service/ReportService.java
+new file mode 100644
+index 0000000..3d1ed17
+--- /dev/null
++++ b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/service/ReportService.java
+@@ -0,0 +1,42 @@
++package com.example.vulnapp.service;
++
++import org.apache.commons.text.StringSubstitutor;
++import org.springframework.stereotype.Service;
++
++import java.util.HashMap;
++import java.util.Map;
++
++/**
++ * Generates text reports from templates supplied by the caller.
++ *
++ * VULNERABILITY: StringSubstitutor.replace() with user-controlled input
++ * can expand script:// and dns:// lookups on commons-text 1.5-1.9
++ * (CVE-2022-42889, "Text4Shell").
++ */
++@Service
++public class ReportService {
++
++    private static final Map<String, String> CONTEXT = new HashMap<>();
++
++    static {
++        CONTEXT.put("appName", "VulnApp");
++        CONTEXT.put("version", "1.0");
++    }
++
++    /**
++     * Render a template string by substituting ${variable} placeholders
++     * and also expanding any special lookup expressions.
++     */
++    public String renderTemplate(String template) {
++        StringSubstitutor substitutor = new StringSubstitutor(CONTEXT);
++        return substitutor.replace(template);
++    }
++
++    /**
++     * Build a standard usage report with static context.
++     */
++    public String buildUsageReport() {
++        return renderTemplate(
++                "App: ${appName} v${version} - Usage Report");
++    }
++}
+diff --git a/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/service/UserService.java b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/service/UserService.java
+new file mode 100644
+index 0000000..200e1ac
+--- /dev/null
++++ b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/service/UserService.java
+@@ -0,0 +1,58 @@
++package com.example.vulnapp.service;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import org.springframework.stereotype.Service;
++
++import java.util.HashMap;
++import java.util.Map;
++
++/**
++ * User business logic service.
++ * Contains a vulnerable Jackson deserialization call.
++ */
++@Service
++public class UserService {
++
++    private final ObjectMapper objectMapper = new ObjectMapper();
++
++    private static final Map<String, Map<String, Object>> USER_STORE = new HashMap<>();
++
++    static {
++        Map<String, Object> alice = new HashMap<>();
++        alice.put("name", "Alice");
++        alice.put("role", "admin");
++        USER_STORE.put("alice", alice);
++
++        Map<String, Object> bob = new HashMap<>();
++        bob.put("name", "Bob");
++        bob.put("role", "user");
++        USER_STORE.put("bob", bob);
++    }
++
++    /**
++     * Find a user in the in-memory store.
++     */
++    public Map<String, Object> findUser(String username) {
++        return USER_STORE.get(username.toLowerCase());
++    }
++
++    /**
++     * Deserialize a raw JSON string into an arbitrary Object type.
++     *
++     * VULNERABILITY: Using Object.class with enableDefaultTyping allows
++     * gadget-chain deserialization attacks (CVE-2022-42003, CVE-2022-42004).
++     */
++    @SuppressWarnings("deprecation")
++    public Object deserializeUser(String rawJson) throws Exception {
++        objectMapper.enableDefaultTyping(
++                ObjectMapper.DefaultTyping.NON_FINAL);
++        return objectMapper.readValue(rawJson, Object.class);
++    }
++
++    /**
++     * Serialize a user map to JSON.
++     */
++    public String serializeUser(Map<String, Object> user) throws Exception {
++        return objectMapper.writeValueAsString(user);
++    }
++}
+diff --git a/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/util/LoggingUtil.java b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/util/LoggingUtil.java
+new file mode 100644
+index 0000000..f0c091c
+--- /dev/null
++++ b/examples/java-vuln-poc/vulnerable-app/src/main/java/com/example/vulnapp/util/LoggingUtil.java
+@@ -0,0 +1,41 @@
++package com.example.vulnapp.util;
++
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
++import org.springframework.stereotype.Component;
++
++/**
++ * Centralised logging utility.
++ *
++ * VULNERABILITY: logger.info() and logger.error() calls with unsanitized
++ * user input on log4j-core 2.0-2.14.1 trigger JNDI lookup expansion
++ * (CVE-2021-44228, "Log4Shell").
++ */
++@Component
++public class LoggingUtil {
++
++    private static final Logger logger = LogManager.getLogger(LoggingUtil.class);
++
++    /**
++     * Log an access event for the given identifier.
++     * Passing user-controlled data triggers Log4Shell on vulnerable versions.
++     */
++    public void logAccess(String identifier) {
++        logger.info("Access by user: {}", identifier);
++    }
++
++    /**
++     * Log an error with a message and associated exception.
++     * Passing user-controlled data in message triggers Log4Shell.
++     */
++    public void logError(String message, Throwable cause) {
++        logger.error("Error - {}", message, cause);
++    }
++
++    /**
++     * Log a debug-level message (lower severity path).
++     */
++    public void logDebug(String detail) {
++        logger.debug("Debug: {}", detail);
++    }
++}
