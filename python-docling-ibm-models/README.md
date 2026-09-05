@@ -27,9 +27,22 @@ The dependency is therefore unversioned in this recipe. Note the asymmetry:
 `python-pytorch-opt-xpu` declares `Provides: python-pytorch=2.13.0` — properly
 versioned — so `python-pytorch>=2.2.2` resolves without help.
 
-`conflicts=('python-transformers=5.13.0')` is left intact. It does not fire
-against an unversioned provide, and it still guards correctly if a real
-versioned `python-transformers` 5.13.0 is ever installed.
+Unversioning the dependency drops upstream's `<6.0.0` ceiling as well as its
+floor, which would otherwise let a Transformers 6.x package satisfy it and
+fail at runtime. The ceiling is restored as a versioned conflict:
+
+```bash
+conflicts=(
+  'python-transformers=5.13.0'
+  'python-transformers>=6.0.0'
+)
+```
+
+A versioned conflict does not match an unversioned provide either, so this
+constrains only a real versioned provider and leaves `python-transformers-git`
+alone. Verified with `pacman -U --print`, which resolves cleanly with
+`python-transformers-git` installed. The `=5.13.0` entry is unchanged and
+still guards against a real versioned 5.13.0.
 
 ## Why 4.0.2 specifically
 

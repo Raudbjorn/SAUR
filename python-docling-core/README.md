@@ -58,6 +58,15 @@ assumed: both console scripts render correctly on the installed typer 0.27.2.
 docling-view --help && docling-serialize --help
 ```
 
+## Optional dependency on Transformers
+
+The `python-transformers` `optdepend` is unversioned, with the floor kept as
+prose. `optdepends` never block an install, but pacman reports whether each is
+satisfied, and a versioned entry is reported unsatisfied against
+`python-transformers-git`'s bare provide — telling users the Hugging Face
+chunking support was unavailable when it was not. Every other `optdepend` here
+keeps its version, because every other provider declares a versioned provide.
+
 ## Build
 
 ```bash
