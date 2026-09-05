@@ -10,6 +10,7 @@ pkgbase = python-docling-parse
 	license = Unlicense
 	license = BSD-3-Clause
 	license = BSL-1.0
+	license = Apache-2.0
 	checkdepends = python-pytest
 	checkdepends = python-huggingface-hub>=1.11.0
 	makedepends = cmake

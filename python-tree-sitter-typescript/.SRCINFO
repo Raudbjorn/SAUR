@@ -7,7 +7,7 @@ pkgbase = python-tree-sitter-typescript
 	arch = aarch64
 	license = MIT
 	checkdepends = python-pytest
-	checkdepends = python-tree-sitter
+	checkdepends = python-tree-sitter>=0.23
 	makedepends = python-build
 	makedepends = python-installer
 	makedepends = python-setuptools

@@ -34,9 +34,14 @@ installed typer 0.27.2.
 
 `python-transformers-git` and `python-websockets-git` both declare bare,
 unversioned provides. pacman will not match those against a versioned
-dependency, so `python-transformers>=5.4.0` and `python-websockets>=14.0`
-fail dependency resolution despite both being installed and above the floor
-(transformers 5.13.0.dev0, websockets 16.1.dev18).
+dependency, so the AUR recipe's `python-transformers>=5.4.0` and
+`python-websockets>=14.0` fail dependency resolution despite both being
+installed and above the floor (transformers 5.13.0.dev0, websockets
+16.1.dev18).
+
+Note that `>=5.4.0` is the AUR recipe's own floor. Upstream v2.125.0 requires
+`transformers>=4.42.0,<6.0.0`, and it is upstream's floor that the conflict
+below encodes.
 
 Both are unversioned here. The `-git` packages are left alone: replacing them
 is a system-wide decision this recipe has no business making.
@@ -50,14 +55,20 @@ conflicts=(
   'python-transformers=5.13.0'
   'python-transformers<4.42.0'
   'python-transformers>=6.0.0'
-  'python-websockets<14.0'
-  'python-websockets>=17.0'
 )
 ```
 
 A versioned conflict does not match an unversioned provide, so these constrain
 only real versioned providers. Verified with `pacman -U --print`, which
 resolves cleanly with both `-git` packages installed.
+
+> [!NOTE]
+> `python-websockets` deliberately gets **no** conflicts entry, though upstream
+> caps it at `<17.0`. It is only a `checkdepend` and an `optdepend` here, never
+> a hard dependency, so a conflict would block installation entirely over a
+> feature the user may never touch. Its supported range lives in the optdepend
+> description instead. `python-transformers` is a hard dependency, so bounding
+> that one with conflicts is proportionate.
 
 The two `optdepends` whose providers declare bare provides — `python-transformers`
 here and `python-websockets` — are likewise unversioned, with the floor kept as
@@ -66,6 +77,15 @@ report whether each is satisfied, and a versioned entry is reported unsatisfied
 against a bare provide: it told users the feature was unavailable when it was
 not. `pacman -Qi docling` now shows
 `python-websockets: remote Docling service streaming (14.0 or newer) [installed]`.
+
+## Local model dependencies
+
+`depends` carries upstream's full `models-local` extra rather than leaning on
+what `python-docling-ibm-models` happens to pull in: `python-accelerate` and
+`python-huggingface-hub` are declared directly alongside `python-pytorch`,
+`python-torchvision`, `python-docling-ibm-models` and `python-defusedxml`.
+Docling passes `device_map` to Transformers, which requires Accelerate, and
+imports `huggingface_hub` directly in `models/utils/hf_model_download.py`.
 
 ## Build
 
