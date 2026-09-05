@@ -22,6 +22,13 @@ makepkg -si --needed --force
 This is a defect fix, not a preference. It should go upstream to the AUR
 recipe rather than be dropped here.
 
+## Licensing
+
+`license` carries `Apache-2.0` alongside MIT, Zlib, Unlicense, BSD-3-Clause
+and BSL-1.0: `package()` installs `PDFIUM-LICENSE`, whose text includes
+Apache License 2.0 terms, so omitting the identifier understated what the
+package ships.
+
 ## Note
 
 This is the only compiled package in the Docling stack here (`arch=('x86_64'

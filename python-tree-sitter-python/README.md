@@ -30,6 +30,15 @@ removed from `depends`. The extension module links none of it — `ldd` on the
 installed `.so` reports zero `libtree-sitter` entries; it uses Python's C API
 and hands back a grammar capsule.
 
+## Check
+
+`check()` installs the freshly built wheel into a throwaway root and runs
+upstream's `bindings/python/tests/test_binding.py` against it with
+`PYTHONPATH`, so it loads the grammar from the wheel under test rather than from a
+copy already installed on the host. That is this package's actual contract:
+the extension it just built must load under the `python-tree-sitter` it
+declares.
+
 ## Build
 
 ```bash
