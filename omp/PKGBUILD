@@ -1,0 +1,83 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+
+pkgname=omp
+pkgver=14.1.4
+pkgrel=1
+pkgdesc="AI coding agent for the terminal, built from a personal fork (hash-anchored edits, optimized tool harness, LSP, Python, browser, subagents)"
+arch=('x86_64_v2')
+url="https://github.com/Raudbjorn/omp"
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'icu' 'zlib')
+makedepends=('bun' 'rustup' 'zig')
+conflicts=('oh-my-pi-git')
+options=('!strip')
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/Raudbjorn/omp/releases/download/v14.1.4-acp.1/omp-14.1.4-acp.1.tar.gz")
+sha256sums=('af82445569dd3fe0eee245b1f3eda94064ed22923f7aeb960a3276df0747c87b')
+
+build() {
+    cd "${srcdir}/omp-${pkgver}-acp.1"
+
+    local _toolchain='nightly-2026-03-27'
+    local _rust_target='x86_64-unknown-linux-gnu'
+    local _baseline_target="${srcdir}/target-baseline"
+    local _modern_target="${srcdir}/target-modern"
+
+    export RUSTUP_HOME="${srcdir}/rustup-home"
+    export CARGO_HOME="${srcdir}/cargo-home"
+
+    if ! rustup run "${_toolchain}" rustc --version >/dev/null 2>&1; then
+        msg2 "Installing rustup toolchain ${_toolchain}..."
+        rustup toolchain install "${_toolchain}"
+    fi
+
+    export PATH="${CARGO_HOME}/bin:${PATH}"
+    export RUSTUP_TOOLCHAIN="${_toolchain}"
+    unset CI
+    # pi-natives' build.rs compiles a vendored C scanner (tree-sitter-glimmer)
+    # via the `cc` crate, which reads CFLAGS/CXXFLAGS. Strip only -march/-mtune
+    # so the host's tuning (e.g. -march=znver4) can't leak into what's built
+    # as the portable x86-64-v2 "baseline" variant below; Arch's hardening
+    # flags (FORTIFY_SOURCE, stack-clash-protection, etc.) are kept.
+    export CFLAGS="$(sed -E 's/-march=[^ ]*//g; s/-mtune=[^ ]*//g' <<<"${CFLAGS}")"
+    export CXXFLAGS="$(sed -E 's/-march=[^ ]*//g; s/-mtune=[^ ]*//g' <<<"${CXXFLAGS}")"
+
+    bun install --frozen-lockfile --cache-dir="${srcdir}/bun-cache"
+
+    if [ -e "${_baseline_target}" ]; then rm -r "${_baseline_target}"; fi
+    if [ -e "${_modern_target}" ]; then rm -r "${_modern_target}"; fi
+
+    CARGO_TARGET_DIR="${_baseline_target}" RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }-C target-cpu=x86-64-v2" \
+        cargo build --release --target "${_rust_target}" -p pi-natives
+    install -Dm755 "${_baseline_target}/${_rust_target}/release/libpi_natives.so" \
+        "packages/natives/native/pi_natives.linux-x64-baseline.node"
+
+    CARGO_TARGET_DIR="${_modern_target}" RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }-C target-cpu=x86-64-v3" \
+        cargo build --release --target "${_rust_target}" -p pi-natives
+    install -Dm755 "${_modern_target}/${_rust_target}/release/libpi_natives.so" \
+        "packages/natives/native/pi_natives.linux-x64-modern.node"
+
+    bun --cwd=packages/coding-agent run build
+}
+
+package() {
+    cd "${srcdir}/omp-${pkgver}-acp.1"
+
+    install -Dm755 "packages/coding-agent/dist/omp" "${pkgdir}/usr/bin/omp"
+
+    install -Dm644 "packages/natives/native/pi_natives.linux-x64-baseline.node" \
+        "${pkgdir}/usr/lib/omp/pi_natives.linux-x64-baseline.node"
+    install -Dm644 "packages/natives/native/pi_natives.linux-x64-modern.node" \
+        "${pkgdir}/usr/lib/omp/pi_natives.linux-x64-modern.node"
+
+    # packages/natives/native/index.js falls back to path.dirname(process.execPath)
+    # (i.e. alongside the omp binary) when its primary lookup locations (a
+    # per-user XDG/versioned cache) don't have the addon yet. Keep that
+    # fallback working via relative symlinks rather than shipping the .node
+    # shared objects themselves as executables directly in /usr/bin.
+    ln -s ../lib/omp/pi_natives.linux-x64-baseline.node \
+        "${pkgdir}/usr/bin/pi_natives.linux-x64-baseline.node"
+    ln -s ../lib/omp/pi_natives.linux-x64-modern.node \
+        "${pkgdir}/usr/bin/pi_natives.linux-x64-modern.node"
+
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

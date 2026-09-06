@@ -11,6 +11,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | --- | --- | --- |
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
+| [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
 | [`python-docling-core`](python-docling-core/) | Docling data types and serialization; `tests/` rename and typer relaxation | Buildable |
 | [`python-docling-ibm-models`](python-docling-ibm-models/) | TableFormer and layout models; 4.0.2 is the floor `docling` requires | Buildable |
@@ -41,6 +42,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Package recipe
 │   └── README.md            # Package-specific notes
+├── omp/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Fork release build; fixed source URL and extracted path
+│   └── README.md            # Fork rationale, naming/conflicts, build() not yet run
 ├── python-docling/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Library-only recipe, bytecode-level fix
