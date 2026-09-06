@@ -1,0 +1,90 @@
+# Maintainer: RubenKelevra <rubenkelevra@gmail.com>
+# Contributor: Rafael Dominiquini <rafaeldominiquini at gmail dot com>
+
+pkgname=python-tree-sitter-c
+_gitpkgname=tree-sitter-c
+pkgver=0.24.1
+pkgrel=4
+pkgdesc='Python Bindings for tree-sitter-c'
+arch=(
+      'x86_64'
+      'aarch64'
+)
+url='https://github.com/tree-sitter/tree-sitter-c'
+license=('MIT')
+depends=(
+  'python'
+  "tree-sitter-c=${pkgver}"
+  # This grammar declares language ABI 15; python-tree-sitter below
+  # 0.25.0 cannot load it. The native tree-sitter library is not a
+  # runtime dependency: the extension module links none of it (ldd).
+  'python-tree-sitter>=0.25.0'
+)
+makedepends=(
+  'python-build'
+  'python-installer'
+  'python-setuptools'
+  'python-wheel'
+)
+
+checkdepends=(
+  'python-pytest'
+  'python-tree-sitter>=0.25.0'
+)
+
+source=(
+  "${_gitpkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/${_gitpkgname}.tar.gz"
+)
+
+# tar is slightly broken with weird hardlinks, so we need to handle this manually
+noextract=(
+  "${_gitpkgname}-${pkgver}.tar.gz"
+)
+
+
+b2sums=('a1f92aa5d9553c36d1f9a2c876bf983b64f7ae511291c94671e2c67058a5deaed74663f0e7498b2e9964e91028a9be2d179c59ab9ee82dc4c6cbec413c5d6bf9')
+
+prepare() {
+  rm -rf "${srcdir}/${_gitpkgname}-${pkgver}"
+  mkdir -p "${srcdir}/${_gitpkgname}-${pkgver}"
+  tar -xzf "${srcdir}/${_gitpkgname}-${pkgver}.tar.gz" -C "${srcdir}/${_gitpkgname}-${pkgver}"
+}
+
+build() {
+  cd "${srcdir}/${_gitpkgname}-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  local _python_version
+  local _checkdir="${srcdir}/${pkgname}-check"
+
+  # Unlike the sibling grammars, this release tarball has a top-level
+  # directory, so build(), check() and package() all cd into it.
+  cd "${srcdir}/${_gitpkgname}-${pkgver}"
+
+  _python_version=$(python --version)
+  _python_version=${_python_version#Python }
+  _python_version=${_python_version%.*}
+  if [[ ! ${_python_version} =~ ^[0-9]+\.[0-9]+$ ]]; then
+    printf 'Unable to determine Python major.minor version: %s\n' "${_python_version}" >&2
+    return 1
+  fi
+
+  # Load the grammar from a throwaway install root, never from an already
+  # installed copy on the host: this package's contract is that the extension
+  # it just built loads under the python-tree-sitter it declares.
+  rm -rf -- "${_checkdir}"
+  python -m installer --destdir="${_checkdir}" dist/*.whl
+
+  PYTHONPATH="${_checkdir}/usr/lib/python${_python_version}/site-packages" \
+    python -m pytest -q bindings/python/tests/test_binding.py
+}
+
+package() {
+  cd "${srcdir}/${_gitpkgname}-${pkgver}"
+
+  python -I -m installer --destdir="${pkgdir}" --compile-bytecode 0 --compile-bytecode 1 dist/*.whl
+  install -D -m 644 -t "${pkgdir}/usr/share/doc/${pkgname}" README.md
+  install -D -m 644 -t "${pkgdir}/usr/share/licenses/${pkgname}" LICENSE
+}

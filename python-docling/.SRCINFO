@@ -1,0 +1,26 @@
+pkgbase = python-docling
+	pkgdesc = Python SDK for parsing documents into a unified representation
+	pkgver = 2.125.0
+	pkgrel = 1
+	url = https://github.com/docling-project/docling
+	arch = any
+	license = MIT
+	checkdepends = python-pytest
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-hatchling
+	makedepends = python-wheel
+	depends = python>=3.10
+	depends = python-pydantic>=2.0.0
+	depends = python-docling-core>=2.91.0
+	depends = python-pydantic-settings>=2.3.0
+	depends = python-filetype>=1.2.0
+	depends = python-requests>=2.32.2
+	depends = python-certifi>=2024.7.4
+	depends = python-pluggy>=1.0.0
+	depends = python-tqdm>=4.65.0
+	optdepends = docling: command-line interface
+	source = docling-2.125.0.tar.gz::https://github.com/docling-project/docling/archive/refs/tags/v2.125.0.tar.gz
+	b2sums = 49084628f6f192ef7b8e3d917ca1dc1960f8626539befc80e06ce18643526f6f82b47e90bcdd1ec371fd6a0aba7135e13276692fd0f475dab0368456556cb6b1
+
+pkgname = python-docling

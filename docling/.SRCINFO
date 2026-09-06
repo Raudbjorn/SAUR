@@ -1,0 +1,66 @@
+pkgbase = docling
+	pkgdesc = Document processing toolkit for converting diverse formats into structured data
+	pkgver = 2.125.0
+	pkgrel = 1
+	url = https://github.com/docling-project/docling
+	arch = any
+	license = MIT
+	checkdepends = python-pytest
+	checkdepends = python-httpx>=0.28
+	checkdepends = python-websockets
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-hatchling
+	makedepends = python-wheel
+	depends = python-docling=2.125.0
+	depends = python-numpy>=1.24.0
+	depends = python-pillow>=10.0.0
+	depends = python-rtree>=1.3.0
+	depends = python-scipy>=1.6.0
+	depends = python-pypdfium2>=4.30.2
+	depends = python-docling-parse>=7.16.0
+	depends = python-docling-ibm-models>=4.0.2
+	depends = python-pytorch>=2.2.2
+	depends = python-torchvision
+	depends = python-accelerate>=1.0.0
+	depends = python-huggingface-hub>=0.23
+	depends = python-transformers
+	depends = python-lxml
+	depends = python-defusedxml>=0.7.1
+	depends = python-typer>=0.12.5
+	depends = python-rich>=13.0.0
+	depends = python-opencv>=4.6.0
+	optdepends = python-polyfactory>=2.22.2: document extraction support
+	optdepends = python-docx>=1.2.0: DOCX input support
+	optdepends = python-pptx>=1.0.2: PowerPoint input support
+	optdepends = python-openpyxl>=3.1.5: Excel input support
+	optdepends = python-beautifulsoup4>=4.12.3: HTML input support
+	optdepends = python-marko>=2.1.2: Markdown input support
+	optdepends = python-pylatexenc>=2.10: LaTeX input support
+	optdepends = python-odfdo>=3.22.0: OpenDocument input support
+	optdepends = python-mail-parser>=4.1.4: email input support
+	optdepends = python-oxmsg>=0.0.2: Outlook MSG input support
+	optdepends = python-rapidocr>=3.9.1: RapidOCR engine
+	optdepends = python-easyocr>=1.7: EasyOCR engine
+	optdepends = python-tesserocr>=2.7.1: Tesseract OCR engine
+	optdepends = python-playwright>=1.58.0: dynamic HTML rendering
+	optdepends = python-semchunk>=2.2.0: semantic chunking support
+	optdepends = python-tree-sitter>=0.25.0: semantic chunking support
+	optdepends = python-tree-sitter-python>=0.23.6: Python-aware semantic chunking
+	optdepends = python-tree-sitter-c>=0.23.4: C-aware semantic chunking
+	optdepends = python-tree-sitter-javascript>=0.23.1: JavaScript-aware semantic chunking
+	optdepends = python-tree-sitter-typescript>=0.23.2: TypeScript-aware semantic chunking
+	optdepends = python-httpx>=0.28: remote Docling service support
+	optdepends = python-websockets: remote Docling service streaming (upstream supports 14.0 through 16.x)
+	optdepends = python-dotenv>=1.0: load CLI configuration from .env files
+	optdepends = python-openai-whisper>=20250625: audio transcription support
+	optdepends = python-numba>=0.63.0: audio transcription support
+	conflicts = python-transformers=5.13.0
+	conflicts = python-transformers<4.42.0
+	conflicts = python-transformers>=6.0.0
+	source = docling-2.125.0.tar.gz::https://github.com/docling-project/docling/archive/refs/tags/v2.125.0.tar.gz
+	source = slim_meta_package.patch
+	b2sums = 49084628f6f192ef7b8e3d917ca1dc1960f8626539befc80e06ce18643526f6f82b47e90bcdd1ec371fd6a0aba7135e13276692fd0f475dab0368456556cb6b1
+	b2sums = 9acf6469b52b7ba242d32171e0bcfdb26c4df91b9071b66c74b8891aa4a1e4faf5d7c3b49acd1e256a7c255cd75a72532ae3419e4bf0d551afb105f36a3ff8d4
+
+pkgname = docling

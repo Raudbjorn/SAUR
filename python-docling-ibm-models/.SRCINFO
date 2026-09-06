@@ -1,0 +1,29 @@
+pkgbase = python-docling-ibm-models
+	pkgdesc = AI models used by the Docling PDF conversion package
+	pkgver = 4.0.2
+	pkgrel = 2
+	url = https://github.com/docling-project/docling-ibm-models
+	arch = any
+	license = MIT
+	checkdepends = python-pytest
+	checkdepends = python-opencv>=4.6.0
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = python>=3.10
+	depends = python-pytorch>=2.2.2
+	depends = python-torchvision
+	depends = python-pillow>=10.0.0
+	depends = python-huggingface-hub>=0.23.0
+	depends = python-safetensors>=0.4.3
+	depends = python-transformers
+	depends = python-numpy>=1.24.4
+	optdepends = python-opencv<5: legacy TableFormer image preprocessing
+	conflicts = python-transformers=5.13.0
+	conflicts = python-transformers<4.42.0
+	conflicts = python-transformers>=6.0.0
+	source = docling-ibm-models-4.0.2.tar.gz::https://github.com/docling-project/docling-ibm-models/archive/refs/tags/v4.0.2.tar.gz
+	b2sums = e4e1e743e7178e5474d1dcfd2c46d01b0a6404b4c54449730ca46f24ca4147fd1f13b748c83c97fd0783378b5ee775bd2ed252406d4ac464833f6bd808260d53
+
+pkgname = python-docling-ibm-models
