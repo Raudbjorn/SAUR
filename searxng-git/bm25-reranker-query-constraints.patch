@@ -1,0 +1,400 @@
+diff -urN a/src/searxng_bm25_reranker/_constraints.py b/src/searxng_bm25_reranker/_constraints.py
+--- a/src/searxng_bm25_reranker/_constraints.py	1970-01-01 00:00:00.000000000 +0000
++++ b/src/searxng_bm25_reranker/_constraints.py	2026-09-19 21:47:27.907057669 +0000
+@@ -0,0 +1,71 @@
++"""Query-constraint boosts for BM25 reranking.
++
++Uses zerodep's ``query_tools`` to pull quoted phrases and ``+required`` terms
++out of the query, then boosts results whose text actually contains them.
++
++Only *presence* is rewarded. Search snippets are short, so a missing phrase
++says little about the page behind it.
++
++Negations (``not X``, ``without X``) are deliberately ignored. The parser
++matches natural-language triggers, so "wifi not working" or "404 not found"
++would demote exactly the results the user wants, and a lexical match cannot
++tell "coffee without caffeine" from "caffeine".
++"""
++
++from __future__ import annotations
++
++import dataclasses
++
++from ._tokenizer import cjk_tokenize
++from ._vendor.query_tools import QueryConstraintParser
++from ._vendor.sparse_search import Result
++
++# BM25 score gain per satisfied constraint (0.5 = +50%).
++CONSTRAINT_BOOST = 0.5
++
++_PARSER = QueryConstraintParser()
++
++
++def _normalize(text: str) -> str:
++    """Lowercase and collapse whitespace so phrases match across line breaks."""
++    return " ".join(text.lower().split())
++
++
++def boost_constraint_matches(
++    results: list[Result], fields: dict[str, tuple[str, ...]], query: str
++) -> list[Result]:
++    """Boost results that contain the query's quoted phrases or +required terms.
++
++    Args:
++        results: BM25 results sorted by descending score (non-negative scores).
++        fields: Document id -> searchable field texts (e.g. title, content).
++            Phrases are matched per field, never across a field boundary.
++        query: Raw user query, before any constraint stripping.
++
++    Returns:
++        ``results`` unchanged when the query has no constraints, otherwise new
++        results re-sorted by boosted score.
++    """
++    constraints = _PARSER.parse(query)
++    phrases = list(filter(None, map(_normalize, constraints.exact_phrases)))
++    required = list(
++        filter(None, (set(cjk_tokenize(t)) for t in constraints.required_terms))
++    )
++    if not phrases and not required:
++        return results
++
++    boosted: list[Result] = []
++    for result in results:
++        doc_fields = fields.get(result.doc_id, ())
++        normalized = [_normalize(f) for f in doc_fields]
++        tokens = {tok for f in doc_fields for tok in cjk_tokenize(f)}
++        matches = sum(any(p in f for f in normalized) for p in phrases)
++        matches += sum(term <= tokens for term in required)
++        boosted.append(
++            dataclasses.replace(
++                result, score=result.score * (1.0 + CONSTRAINT_BOOST * matches)
++            )
++        )
++
++    boosted.sort(key=lambda r: r.score, reverse=True)
++    return boosted
+diff -urN a/src/searxng_bm25_reranker/__init__.py b/src/searxng_bm25_reranker/__init__.py
+--- a/src/searxng_bm25_reranker/__init__.py	2026-09-09 12:04:49.000000000 +0000
++++ b/src/searxng_bm25_reranker/__init__.py	2026-09-19 21:47:27.907201991 +0000
+@@ -2,6 +2,7 @@
+ 
+ Uses sparse_search (zerodep BM25 implementation) to rerank search results
+ by text relevance, with RRF fusion to preserve engine ranking signals.
++Quoted phrases and +required terms (zerodep query_tools) boost matching results.
+ """
+ 
+ from __future__ import annotations
+@@ -11,6 +12,7 @@
+ 
+ from searx.plugins import Plugin, PluginInfo  # ty: ignore[unresolved-import]
+ 
++from ._constraints import boost_constraint_matches
+ from ._tokenizer import cjk_tokenize
+ from ._vendor.sparse_search import Result as SparseResult
+ from ._vendor.sparse_search import SparseIndex, rrf
+@@ -82,19 +84,23 @@
+         )
+ 
+         valid_indices: list[int] = []
++        fields: dict[str, tuple[str, ...]] = {}
+         for i, r in enumerate(results):
+             title = _get_text(r, "title")
+             content = _get_text(r, "content")
+             if not title and not content:
+                 continue
+             idx.add(str(i), {"title": title, "content": content})
++            fields[str(i)] = (title, content)
+             valid_indices.append(i)
+ 
+         if len(valid_indices) < 2:
+             return
+ 
+-        # BM25 retrieval
+-        bm25_results = idx.search(query, top_k=len(valid_indices))
++        # BM25 retrieval, boosting results that satisfy quoted phrases / +terms
++        bm25_results = boost_constraint_matches(
++            idx.search(query, top_k=len(valid_indices)), fields, query
++        )
+ 
+         # Build engine ranking from original positions
+         engine_ranking = [
+diff -urN a/src/searxng_bm25_reranker/_vendor/query_tools.py b/src/searxng_bm25_reranker/_vendor/query_tools.py
+--- a/src/searxng_bm25_reranker/_vendor/query_tools.py	1970-01-01 00:00:00.000000000 +0000
++++ b/src/searxng_bm25_reranker/_vendor/query_tools.py	2026-09-19 21:45:12.913659108 +0000
+@@ -0,0 +1,276 @@
++# /// zerodep
++# version = "0.1.0"
++# deps = []
++# tier = "simple"
++# category = "text"
++# note = "Install/update via `zerodep add query_tools`"
++# ///
++"""Zero-dependency query analysis: constraint parsing and antonym penalties.
++
++Part of zerodep: https://github.com/Oaklight/zerodep
++Copyright (c) 2026 Peng Ding. MIT License.
++Derived from the ``query_tools`` module of pylysearch (MIT License).
++
++Extract structured constraints (negations, exact phrases, numeric ranges,
++required terms) from natural-language queries, and down-rank results whose
++attributes contradict the query using a registry of antonym pairs. Both
++pieces are plain-Python building blocks for search pipelines.
++
++Constraint parsing::
++
++    parser = QueryConstraintParser()
++    parser.add_range_field(
++        "price", r"\\bprice\\s*(\\d+)\\s*(?:to|-)\\s*(\\d+)"
++    )
++    c = parser.parse('cheap laptops not apple price 500-1000 +nvidia')
++    c.negations       # ['apple']
++    c.ranges          # {'price': (500.0, 1000.0)}
++    c.required_terms  # ['nvidia']
++    c.clean_query     # 'cheap laptops'
++
++Antonym penalties::
++
++    mapper = AntonymMapper()
++    mapper.add_pair("hot", "cold")
++    mapper.calculate_penalty(["hot"], ["cold", "spicy"])  # 0.5
++"""
++
++from __future__ import annotations
++
++import re
++from dataclasses import dataclass, field
++
++__all__ = [
++    "AntonymMapper",
++    "QueryConstraintParser",
++    "QueryConstraints",
++]
++
++
++# ---------------------------------------------------------------------------
++# Antonym Mapper
++# ---------------------------------------------------------------------------
++
++# Score multiplier indexed by the number of conflicting query terms. The last
++# entry applies to every count beyond the end of the table.
++_PENALTY_BY_CONFLICTS: tuple[float, ...] = (1.0, 0.5, 0.25, 0.1)
++
++
++class AntonymMapper:
++    """Bidirectional antonym registry with penalty scoring.
++
++    Register pairs of semantically opposite terms, then calculate a penalty
++    multiplier when query terms conflict with result attributes. Matching is
++    case-insensitive.
++
++    Penalty scale (by number of conflicting query terms):
++
++    - 0 conflicts: 1.0 (no penalty)
++    - 1 conflict:  0.5
++    - 2 conflicts: 0.25
++    - 3 or more:   0.1
++    """
++
++    __slots__ = ("_pairs",)
++
++    def __init__(self) -> None:
++        self._pairs: dict[str, set[str]] = {}
++
++    def add_pair(self, term_a: str, term_b: str) -> None:
++        """Register a bidirectional antonym pair."""
++        a, b = term_a.lower(), term_b.lower()
++        self._pairs.setdefault(a, set()).add(b)
++        self._pairs.setdefault(b, set()).add(a)
++
++    def add_pairs(self, pairs: list[tuple[str, str]]) -> None:
++        """Register multiple antonym pairs."""
++        for a, b in pairs:
++            self.add_pair(a, b)
++
++    def get_antonyms(self, term: str) -> frozenset[str]:
++        """Return all registered antonyms of *term* as an immutable set."""
++        return frozenset(self._antonyms(term))
++
++    def has_conflict(self, term: str, candidates: list[str]) -> bool:
++        """Check whether any candidate is an antonym of *term*."""
++        antonyms = self._antonyms(term)
++        return any(c.lower() in antonyms for c in candidates)
++
++    def calculate_penalty(
++        self,
++        query_terms: list[str],
++        result_terms: list[str],
++    ) -> float:
++        """Calculate a penalty multiplier from antonym matches.
++
++        Args:
++            query_terms: Terms from the user's query.
++            result_terms: Attribute values from a search result.
++
++        Returns:
++            Penalty multiplier (1.0 means no penalty; lower means more
++            conflicts).
++        """
++        result_lower = {t.lower() for t in result_terms}
++        conflicts = sum(1 for qt in query_terms if self._antonyms(qt) & result_lower)
++        return _PENALTY_BY_CONFLICTS[min(conflicts, len(_PENALTY_BY_CONFLICTS) - 1)]
++
++    def apply_penalties(
++        self,
++        query_terms: list[str],
++        results: list[tuple[str, float, list[str]]],
++    ) -> list[tuple[str, float]]:
++        """Apply antonym penalties to scored results.
++
++        Args:
++            query_terms: Terms from the user's query.
++            results: ``(doc_id, score, attribute_values)`` tuples.
++
++        Returns:
++            ``(doc_id, penalized_score)`` tuples sorted by descending score.
++        """
++        penalized = [
++            (doc_id, score * self.calculate_penalty(query_terms, attrs))
++            for doc_id, score, attrs in results
++        ]
++        penalized.sort(key=lambda item: item[1], reverse=True)
++        return penalized
++
++    @property
++    def pair_count(self) -> int:
++        """Number of unique antonym relationships."""
++        return len(
++            {
++                frozenset((term, antonym))
++                for term, antonyms in self._pairs.items()
++                for antonym in antonyms
++            }
++        )
++
++    def __len__(self) -> int:
++        """Number of unique antonym pairs."""
++        return self.pair_count
++
++    def __bool__(self) -> bool:
++        return bool(self._pairs)
++
++    def __contains__(self, term: str) -> bool:
++        """Check whether a term has any registered antonyms."""
++        return term.lower() in self._pairs
++
++    def _antonyms(self, term: str) -> set[str] | frozenset[str]:
++        """Internal antonym lookup without copying (do not expose)."""
++        return self._pairs.get(term.lower(), frozenset())
++
++
++# ---------------------------------------------------------------------------
++# Query Constraint Parser
++# ---------------------------------------------------------------------------
++
++_NEGATION_RE = re.compile(r"\b(not|without|except|excluding|no)\s+(\w+)", re.IGNORECASE)
++_QUOTED_RE = re.compile(r'"([^"]+)"')
++_REQUIRED_RE = re.compile(r"\+(\w+)")
++
++
++@dataclass(frozen=True, slots=True)
++class QueryConstraints:
++    """Structured constraints extracted from a natural-language query."""
++
++    original_query: str
++    clean_query: str
++    negations: list[str] = field(default_factory=list)
++    exact_phrases: list[str] = field(default_factory=list)
++    ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
++    required_terms: list[str] = field(default_factory=list)
++
++    def __str__(self) -> str:
++        return self.clean_query
++
++    def __bool__(self) -> bool:
++        """True if any constraints were extracted."""
++        return bool(
++            self.negations or self.exact_phrases or self.ranges or self.required_terms
++        )
++
++
++class QueryConstraintParser:
++    """Extract structured constraints from natural-language queries.
++
++    Supports:
++
++    - Negation: ``not X``, ``without X``, ``except X``, ``excluding X``,
++      ``no X``
++    - Exact phrases: ``"quoted strings"``
++    - Numeric ranges: configurable per field (e.g. ``price 10-50``)
++    - Required terms: ``+term``
++    """
++
++    __slots__ = ("_range_patterns", "_stop_negations")
++
++    def __init__(self) -> None:
++        self._range_patterns: list[tuple[str, re.Pattern[str]]] = []
++        self._stop_negations: set[str] = set()
++
++    def add_range_field(self, field_name: str, pattern: str) -> None:
++        """Register a regex pattern for extracting a numeric range.
++
++        The pattern must contain exactly two capture groups for
++        ``(low, high)``; matches whose groups are not numbers are ignored.
++        Matching is case-insensitive.
++
++        Example::
++
++            parser.add_range_field(
++                "price", r"\\bprice\\s*(\\d+)\\s*(?:to|-)\\s*(\\d+)"
++            )
++        """
++        self._range_patterns.append((field_name, re.compile(pattern, re.IGNORECASE)))
++
++    def add_negation_stopwords(self, words: list[str]) -> None:
++        """Register words that must NOT be treated as negated targets.
++
++        Prevents false positives such as ``not only`` negating ``only``.
++        """
++        self._stop_negations.update(w.lower() for w in words)
++
++    def parse(self, query: str) -> QueryConstraints:
++        """Parse a query string into structured constraints."""
++        working = query
++        negations: list[str] = []
++        ranges: dict[str, tuple[float, float]] = {}
++
++        # Quoted exact phrases
++        exact_phrases = [m.group(1) for m in _QUOTED_RE.finditer(working)]
++        working = _QUOTED_RE.sub("", working)
++
++        # Negations
++        for match in _NEGATION_RE.finditer(working):
++            term = match.group(2).lower()
++            if term not in self._stop_negations:
++                negations.append(term)
++        working = _NEGATION_RE.sub("", working)
++
++        # Numeric ranges
++        for field_name, pattern in self._range_patterns:
++            match = pattern.search(working)
++            if match:
++                try:
++                    low = float(match.group(1))
++                    high = float(match.group(2))
++                    ranges[field_name] = (min(low, high), max(low, high))
++                except (ValueError, IndexError):
++                    pass
++                working = pattern.sub("", working)
++
++        # Required terms (+term)
++        required = [m.group(1) for m in _REQUIRED_RE.finditer(working)]
++        working = _REQUIRED_RE.sub("", working)
++
++        return QueryConstraints(
++            original_query=query,
++            clean_query=" ".join(working.split()),
++            negations=negations,
++            exact_phrases=exact_phrases,
++            ranges=ranges,
++            required_terms=required,
++        )
