@@ -24,6 +24,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`python-tree-sitter-python`](python-tree-sitter-python/) | `tree_sitter_python` grammar module for code-aware chunking | Buildable |
 | [`python-tree-sitter-typescript`](python-tree-sitter-typescript/) | `tree_sitter_typescript` grammar module for code-aware chunking | Buildable |
 | [`python-tree-sitter025`](python-tree-sitter025/) | `python-tree-sitter` pinned to 0.25.x; 0.26.0 faults on large Solidity inputs | Remove once 0.26.1 or newer passes the reproducer |
+| [`searxng-git`](searxng-git/) | SearXNG with a custom theme, BM25 reranking, and Anna's Archive made to actually return results | Builds, installs and runs; theme rebuild adds npm, gcc and libvips to makedepends |
 | [`trailmark-git`](trailmark-git/) | Trailmark source-graph parser at upstream `f7e19d3`, plus fork and downstream patches | Buildable with `python-tree-sitter025` and AUR dependencies |
 
 ## Repository layout

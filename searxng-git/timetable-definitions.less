@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// Timetable — token layer.
+// Replaces upstream client/simple/src/less/definitions.less.
+//
+// Four inks, counted: ground, ink, rule, signal. `muted` is a tint of ink on
+// ground, not a fifth ink. Every upstream --color-* token is mapped onto one of
+// them; nothing here introduces a hue the system has not declared.
+//
+// Contrast verified against the ground each pair actually renders on:
+//   ink/ground 14.25:1 · muted/ground 5.54:1 · signal/ground 4.74:1 (light)
+//   ink/ground 14.25:1 · muted/ground 7.14:1 · signal/ground 5.40:1 (dark)
+
+/// Type ramp. Six steps, and every font-size in the layout layer takes one of
+/// them; the near-duplicates that used to sit inside a 0.06rem band are gone.
+.type-ramp() {
+  --fs-micro: 0.62rem; // provenance, cache link, error labels
+  --fs-meta: 0.68rem;  // column heads, timings, dates
+  --fs-label: 0.72rem; // rail ordinals, source line, controls
+  --fs-body: 0.78rem;  // snippets, dialogs
+  --fs-base: 0.9rem;   // page default
+  --fs-title: 1rem;    // result claim, query field
+}
+
+.ink-system(@ground, @ground-sunk, @ink, @muted, @rule, @signal) {
+  /// ground
+  --color-base-background: @ground;
+  --color-base-background-mobile: @ground;
+  --color-header-background: @ground;
+  --color-footer-background: @ground;
+  --color-sidebar-background: @ground;
+  --color-result-background: @ground;
+  --color-answer-background: @ground;
+  --color-autocomplete-background: @ground;
+  --color-search-background: @ground;
+  --color-backtotop-background: @ground;
+  --color-result-detail-background: @ground;
+  --color-toolkit-dialog-background: @ground;
+  --color-toolkit-select-background: @ground;
+  --color-result-image-background: @ground;
+  --color-favicon-background-color: @ground;
+  --color-image-resolution-background: @ground;
+  --color-doc-code-background: @ground;
+
+  /// ground, sunk one step (zebra rows, hover, pressed) — still the ground
+  --color-autocomplete-background-hover: @ground-sunk;
+  --color-search-background-hover: @ground-sunk;
+  --color-toolkit-select-background-hover: @ground-sunk;
+  --color-settings-tr-hover: @ground-sunk;
+  --color-settings-table-group-background: @ground-sunk;
+  --color-result-keyvalue-odd: @ground-sunk;
+  --color-result-keyvalue-even: @ground;
+  --color-result-keyvalue-col-table: @ground-sunk;
+  --color-result-keyvalue-table: @ground-sunk;
+  --color-result-vim-selected: @ground-sunk;
+  --color-toolkit-kbd-background: @ground-sunk;
+  --color-toolkit-badge-background: @ground-sunk;
+  --color-toolkit-engine-tooltip-background: @ground-sunk;
+  --color-show-btn-background: @ground-sunk;
+  --color-toolkit-checkbox-label-background: @ground-sunk;
+  --color-toolkit-checkbox-onoff-off-background: @ground-sunk;
+  --color-error-background: @ground-sunk;
+  --color-warning-background: @ground-sunk;
+  --color-success-background: @ground-sunk;
+
+  /// ink
+  --color-base-font: @ink;
+  --color-base-font-rgb: red(@ink), green(@ink), blue(@ink);
+  --color-sidebar-font: @ink;
+  --color-search-font: @ink;
+  --color-autocomplete-font: @ink;
+  --color-answer-font: @ink;
+  --color-result-link-font: @ink;
+  --color-result-link-font-highlight: @ink;
+  --color-result-description-highlight-font: @ink;
+  --color-result-detail-font: @ink;
+  --color-result-detail-link: @ink;
+  --color-backtotop-font: @ink;
+  --color-toolkit-input-text-font: @ink;
+  --color-toolkit-kbd-font: @ink;
+  --color-toolkit-badge-font: @ink;
+  --color-doc-code: @ink;
+  --color-show-btn-font: @ink;
+  --color-image-resolution-font: @ink;
+  --color-result-image-span-font: @ink;
+  --color-bar-chart-primary: @ink;
+  --color-line-number: @muted;
+
+  /// ink, muted (a tint of ink on ground — provenance, dates, secondary chrome)
+  --color-url-font: @muted;
+  --color-url-visited-font: @muted;
+  --color-result-url-font: @muted;
+  --color-result-link-visited-font: @muted;
+  --color-result-publishdate-font: @muted;
+  --color-result-engines-font: @muted;
+  --color-result-search-url-font: @muted;
+  --color-result-detail-label-font: @muted;
+  --color-settings-engine-description-font: @muted;
+  --color-bar-chart-secondary: @muted;
+
+  /// rule — one weight, every separation in the system
+  --color-header-border: @rule;
+  --color-footer-border: @rule;
+  --color-sidebar-border: @rule;
+  --color-result-border: @rule;
+  --color-search-border: @rule;
+  --color-autocomplete-border: @rule;
+  --color-backtotop-border: @rule;
+  --color-result-search-url-border: @rule;
+  --color-result-detail-hr: @rule;
+  --color-toolkit-dialog-border: @rule;
+  --color-toolkit-select-border: @rule;
+  --color-toolkit-tabs-label-border: @rule;
+  --color-toolkit-tabs-section-border: @rule;
+  --color-toolkit-checkbox-input-border: @rule;
+  --color-toolkit-checkbox-label-border: @rule;
+  --color-toolkit-engine-tooltip-border: @rule;
+  --color-favicon-border-color: @rule;
+  --color-toolkit-loader-border: @rule;
+  --color-result-detail-loader-border: @rule;
+
+  /// signal — state that matters, and nothing else
+  --color-btn-background: @signal;
+  --color-btn-font: @ground;
+  --color-categories-item-selected-font: @signal;
+  --color-categories-item-border-selected: @signal;
+  // this one is a FILL, not a font: signal here painted the preferences tab
+  // signal-on-signal and its label vanished. Every upstream rule that reads it
+  // also draws the 2px signal underline, so selection stays marked without a
+  // fill — and the label then reads on the open ground at 4.74:1 rather than
+  // 4.28:1 against a sunk box that was carrying no information.
+  --color-categories-item-selected: transparent;
+  // signal is failure only: a notice that borrows it stops failure meaning
+  // anything, which is the opposite of "make failure loud"
+  --color-error: @signal;
+  --color-warning: @muted;
+  --color-success: @ink;
+  --color-result-vim-arrow: @signal;
+  --color-loading-indicator: @signal;
+  --color-loading-indicator-gap: @rule;
+  --color-toolkit-loader-borderleft: @signal;
+  --color-result-detail-loader-borderleft: @signal;
+  --color-toolkit-checkbox-onoff-on-background: @signal;
+  --color-toolkit-checkbox-onoff-on-mark-background: @ground;
+  --color-toolkit-checkbox-onoff-on-mark-color: @signal;
+  --color-toolkit-checkbox-onoff-off-mark-background: @ground;
+  --color-toolkit-checkbox-onoff-off-mark-color: @muted;
+  --color-result-image-span-font-selected: @signal;
+  --color-settings-return-font: @signal;
+
+  /// zero depth: the system separates with rules and alignment, never lift
+  --color-search-shadow: none;
+  --color-autocomplete-shadow: none;
+}
+
+/// Light — bone ground, graphite ink
+:root {
+  .type-ramp();
+  .ink-system(#e8e6e1, #dedbd4, #16181c, #595a5b, #a8a49b, #c81020);
+}
+
+.dark-themes() {
+  .ink-system(#16181c, #1d2025, #e8e6e1, #a5a4a2, #424852, #ff4b52);
+}
+
+.black-themes() {
+  .ink-system(#000000, #0b0d10, #e8e6e1, #a5a4a2, #3a3f47, #ff4b52);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root.theme-auto {
+    .dark-themes();
+  }
+}
+
+:root.theme-dark {
+  .dark-themes();
+}
+
+:root.theme-black {
+  .black-themes();
+}
+
+/// General Size
+/// The result rail widens because results are now columns, not prose blocks.
+@results-width: 58rem;
+@results-sidebar-width: 20rem;
+@results-offset: 4rem;
+@results-tablet-offset: 0.5rem;
+@results-gap: 3rem;
+@results-margin: 0;
+@result-padding: 0.5rem;
+@results-image-row-height: 12rem;
+@results-image-row-height-phone: 10rem;
+@search-width: 44rem;
+// height of #search, see detail.less
+@search-height: 13rem;
+@search-padding-horizontal: 0.5rem;
+
+/// Device Size
+/// @desktop > @tablet
+@tablet: 79.75em; // see https://github.com/searxng/searxng/issues/874
+@phone: 50em;
+@small-phone: 35em;
+@ultra-small-phone: 20rem;
+
+/// From style.less
+@stacked-bar-chart: rgb(0, 0, 0);
+
+/// Load fonts from this directory.
+@icon-font-path: "../../../fonts/";
+//** File name for all font files.
+@icon-font-name: "glyphicons-halflings-regular";
+//** Element ID within SVG icon file.
+@icon-font-svg-id: "glyphicons_halflingsregular";
+
+// decoration of the select HTML elements
+@select-light-svg-path: "../svg/select-light.svg";
+@select-dark-svg-path: "../svg/select-dark.svg";

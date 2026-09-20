@@ -1,0 +1,75 @@
+# SearXNG instance configuration -- merged on top of the upstream defaults.
+# See https://docs.searxng.org/admin/settings/index.html
+use_default_settings: true
+
+server:
+    secret_key: "ultrasecretkey"  # change this!
+    # granian binds the socket (see searxng.service); these values are what the
+    # application itself reports and must match GRANIAN_HOST / GRANIAN_PORT.
+    bind_address: "127.0.0.1"
+    port: 8888
+    limiter: true
+    # Route result images through searxng so the origin never sees the
+    # client. Costs bandwidth on this host.
+    image_proxy: true
+
+valkey:
+    # A stock Arch 'valkey' listens on 127.0.0.1:6379 with no password; this is
+    # the only default that works out of the box. To use a UNIX socket instead,
+    # set 'unixsocket /run/valkey/valkey.sock' plus 'unixsocketperm 770' in
+    # /etc/valkey/valkey.conf and switch to:
+    #   url: unix:///run/valkey/valkey.sock?db=1
+    url: valkey://127.0.0.1:6379/1
+
+search:
+    # Favicons beside each result. All built-in resolvers hand your result
+    # domains to a third party; "searxico" instead points at a worker you host
+    # (see /etc/searxng/favicons.toml). Cached locally either way.
+    favicon_resolver: "duckduckgo"
+    # upstream waits for 4 characters before suggesting
+    autocomplete_min: 2
+    # html only by default; json/csv/rss make the instance scriptable and
+    # subscribable. Only reachable behind the limiter on a private instance.
+    formats:
+        - html
+        - json
+        - csv
+        - rss
+
+ui:
+    # Open results in a new tab
+    results_on_new_tab: true
+    # "auto" follows the browser's prefers-color-scheme
+    theme_args:
+        simple_style: auto
+
+# NOTE: settings_loader REPLACES this whole mapping, it does not merge into the
+# upstream defaults. Every plugin you want must be listed here, including the
+# built-ins, and a new upstream plugin will not appear until it is added below.
+plugins:
+    searx.plugins.calculator.SXNGPlugin:
+        active: true
+    searx.plugins.hash_plugin.SXNGPlugin:
+        active: true
+    searx.plugins.self_info.SXNGPlugin:
+        active: true
+    searx.plugins.unit_converter.SXNGPlugin:
+        active: true
+    searx.plugins.ahmia_filter.SXNGPlugin:
+        active: true
+    searx.plugins.hostnames.SXNGPlugin:
+        active: true
+    searx.plugins.time_zone.SXNGPlugin:
+        active: true
+    searx.plugins.tracker_url_remover.SXNGPlugin:
+        active: true
+    searx.plugins.infinite_scroll.SXNGPlugin:
+        active: true
+    searx.plugins.oa_doi_rewrite.SXNGPlugin:
+        active: false
+    searx.plugins.tor_check.SXNGPlugin:
+        active: false
+    # BM25F reranking with RRF fusion over the post_search hook. Local-only,
+    # makes no outbound requests; it reorders what the engines already returned.
+    searxng_bm25_reranker.SXNGPlugin:
+        active: true

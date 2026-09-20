@@ -1,0 +1,239 @@
+# Maintainer: HLFH <gaspard@dhautefeuille.eu>
+
+pkgname=searxng-git
+_pkgname=searxng
+pkgver=r9782.2e624be
+pkgrel=1
+pkgdesc="A privacy-respecting, hackable metasearch engine"
+# not 'any': the bundled venv ships compiled extensions (lxml, msgspec,
+# curl_cffi, granian) built for this architecture and CPython ABI.
+arch=('x86_64')
+url="https://searxng.github.io/searxng/"
+# AGPL covers searxng and the bundled bm25 plugin; OFL covers the
+# Archivo font files shipped with the Timetable theme
+license=('AGPL-3.0-or-later' 'OFL-1.1')
+makedepends=('git' 'python-build' 'python-msgspec' 'python-setuptools'
+             'python-wheel' 'python-yaml' 'uv'
+             # the Timetable theme is a LESS override layer, so the client
+             # stylesheet is rebuilt from source with upstream's vite pipeline
+             'npm' 'nodejs')
+# 'python' is a hard dependency: the venv links against the system interpreter,
+# so a CPython minor-version bump requires a rebuild of this package.
+depends=('python' 'valkey' 'openssl')
+optdepends=('nginx: reverse proxy, see /usr/share/doc/searxng/searxng.example.com.conf'
+            'flaresolverr: DDoS-Guard clearance for the Annas Archive engines')
+provides=("searxng=${pkgver}")
+conflicts=('searx' 'searx-git' 'searxng')
+backup=('etc/searxng/settings.yml' 'etc/searxng/limiter.toml' 'etc/searxng/favicons.toml')
+install="$pkgname.install"
+_giturl="https://github.com/searxng/searxng"
+_gitbranch="master"
+# BM25 reranking plugin (AGPL-3.0); the patch adds query-constraint boosting
+# on top of upstream, vendoring zerodep's query_tools.
+_rerankerurl="https://github.com/Oaklight/searxng-bm25-reranker"
+_rerankerbranch="main"
+source=(git+$_giturl#branch=$_gitbranch
+        git+$_rerankerurl#branch=$_rerankerbranch
+        'settings.yml'
+        'searxng.sysusers'
+        'searxng.tmpfiles'
+        'searxng.service'
+        'searxng.example.com.conf'
+        'annas-archive-ddg-clearance.patch'
+        'annas-archive-none-fields.patch'
+        'searxng-annas-ddg-refresh'
+        'searxng-annas-ddg-refresh.service'
+        'searxng-annas-ddg-refresh.timer'
+        'bm25-reranker-query-constraints.patch'
+        'favicons.toml'
+        'searxng_searxico.py'
+        'timetable-definitions.less'
+        'timetable.less'
+        'timetable-fonts.less'
+        'archivo-latin.woff2'
+        'archivo-latin-ext.woff2'
+        'archivo-vietnamese.woff2'
+        'LICENSE.archivo-ofl')
+b2sums=('SKIP'
+        'SKIP'
+        '2d1d862ec1f78da051cbd8225b820177a5e7ae77f4bfe5c788244f387546b3d9f0da59a26316731e83b6da815f590206269114b78ed1d8d81220035d39e7ce93'
+        '3487c220d6c538dba60671aaaf0927746d8ede4d47f901e01542efdf74dc067ade3d3ee30b500f08d3ef00c2ceba460961e0f4329a4afc32b83e42d8761d5e41'
+        '6a5edabee182d0d30432d07a4ed54870314cb2d7d1d65daee0486a661cbd04cf4be3437eeaa973c015a911c00e90df9d2e45664840d7e7226248964793c41ee1'
+        'ed0e4bb207472ee3a875aba9c2a372446d9a3a678d5b649e9b937a9b5d69af32cdd3edb0549259384ae237a196e87739ea7b4d2753b71861f3a17d8cd666c7ee'
+        '77c9a99be9942233a951b3d5267c9317bb20989a7acde9cfff377666cf974b4100d05cf63f63704dc35e91e61ed720e99e98e62775f5195e0b9ea08c66120fb3'
+        'd284ef8052ed736d3ed30531d5dd31f8db71034acda703f657838f1b8cb713c351637e4f9f1aef4500b3cc82528fb689905fe44cc0e2ea10878f1e89559cf8eb'
+        '794ab9013608db97a5ce3f3cf6cda8fc9a8d7845f203cc63f8382601e7538807d9ead4bd95d8302ccae4ee1c915729aea016a6bdaf74bafb0731063eee1dce8b'
+        '1dca8eef2e3e4b9d707dd379d0bc828f59a2b19cee89fd0b8696aa4c86cd491f51787bc09359a8f6268079ee2a624e52bd1f6fa56acdce547d81a1e15f68d8b5'
+        'ff12d7843c0d36788b309e399e6979ea0b7f80a007e6c0129bde0f89bec30db8c3bf55ff979596ced16d457330463b147db8b1504e3dcd05e6532317fb56f0eb'
+        'b30e697a28f98073810f68c2ee000bf9417547d83462c062e56924a212e750da0f79ae8774a34877e74538125d18d2d98418895c8f47b2f389c8a4c2cc1d9971'
+        'fde94440195c84d39204944dc887ecf9188f5b77027fb8e24fd2c514d54d2ee46c6c175a2c3b43ad47afcaef0a730868606c43195f884ac912823a0d68de7b7d'
+        'd0d282a6f92920c0975026bbeabbcf8f8d65663b1d915c869e952c3fafc9f08117ffc09cc3a83a5691a6330deaeb9d883a60e0be5056f4b0e57d05f234307fbd'
+        '7774f07c14e2be01722ec91af8edfb6653053328d262a7f65332c650ca26e22565a43d5913084b9cce07e673607ff01c9b90f535c3890a1eda97786927290bc7'
+        '4f08ab12b07ea6c20a61c6aa76ba7f852fdb27a5978cce8aee992aac890e9e3719739f1b1eef2997898e21163cc8df10cb217248112f2b16de17f74561d9c719'
+        'a45af490720e8986f2b79f25a1e08c176573f20e379aa8cfe6e72ad5d67c9b7138d08d50d9f0baa07d196c24f7094ca0f79d7e875fa2fbbadb0f6e52e80e1baa'
+        'b724218270f27eacf2e745fce8823f28b1615b8dcee257a654aac97beb8f755a0e289de9fef9e07dc27b8bf96dcdaa1cdbdbed964d90dd9a2b447f734ef8ee67'
+        '274c74232144014243303649275bf248594cc8ea481a05143ece02becce4f6fd8e9e39600c5fe84158e7c52b384f3e6d5631249b95f34b1fbbd46c1be4ad43f7'
+        '710f68dad785a7ebda89999e852faba9c245084c70a3a87a74a6929da10b5588b2032b4c00f6d43fcc7e5fcea3ff6d5c2253bf0d149d6d6f9164198a4bfe1764'
+        '2bf293c6f745061bf6eba135c9dcffb43597690f5fb1cbb7378e8753f1f8ed94f065c164252db3b3c1afe740226986993d939d39a8aed2ffb69a1c61a0ba2828'
+        'bff169f6ede06e989a983e2c4cca8d34259bb9e63877e05c7c9d892495861866c1568f5c6f06388d4e36e2d38dff6cdee9842a9e8cb317e22e952c974dd3e504')
+
+pkgver() {
+  cd "$_pkgname"
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  # Route Anna's Archive requests through a DDoS-Guard clearance minted by
+  # searxng-annas-ddg-refresh; without it every mirror answers 403 and the
+  # engine silently reports zero results.
+  patch -d "$_pkgname" -p1 -i "$srcdir/annas-archive-ddg-clearance.patch"
+
+  # Upstream lets extract_text(allow_none=True) put None into content,
+  # publisher and authors. The result container normalizes those with a regex
+  # and raises TypeError, dropping the engine's entire response.
+  patch -d "$_pkgname" -p1 -i "$srcdir/annas-archive-none-fields.patch"
+
+  # The patch ADDS files; makepkg's reset restores tracked files but leaves
+  # untracked ones behind, so a rerun after a failed build would hit
+  # "file already exists". Clear them first to keep prepare() idempotent.
+  git -C searxng-bm25-reranker clean -xfdq
+  patch -d searxng-bm25-reranker -p1 -i "$srcdir/bm25-reranker-query-constraints.patch"
+
+  # Work on a real copy: makepkg symlinks local sources into $srcdir and we do
+  # not want to touch the files tracked in the packaging repository.
+  # The secret_key placeholder is deliberately left intact: post_install
+  # replaces it per machine (see searxng.install). Generating it here would ship
+  # one shared key inside the package and rotate it on every rebuild.
+  cp -f "$srcdir/settings.yml" "$srcdir/settings.yml.build"
+
+}
+
+build() {
+  cd "$_pkgname"
+
+  # the oneAPI profile exports PYTHONPATH; it must not leak into the build
+  unset PYTHONPATH
+
+  export SEARXNG_SETTINGS_PATH="$srcdir/settings.yml.build"
+  python -m searx.version freeze
+  sed -i "s|GIT_URL =.*|GIT_URL = \"${_giturl}\"|g" searx/version_frozen.py
+  sed -i "s|GIT_BRANCH =.*|GIT_BRANCH = \"${_gitbranch}\"|g" searx/version_frozen.py
+
+  # ---- Timetable theme -------------------------------------------------
+  # The whole look is a token file plus one override layer; no template is
+  # forked, so upstream's markup stays authoritative and rebases stay cheap.
+  printf "  -> %s\n" "applying the Timetable theme"
+  install -Dm644 "$srcdir/timetable-definitions.less" client/simple/src/less/definitions.less
+  install -Dm644 "$srcdir/timetable.less" client/simple/src/less/themes/timetable/timetable.less
+  install -Dm644 "$srcdir/timetable-fonts.less" client/simple/src/less/themes/timetable/fonts.less
+
+  # vite's publicDir is copied verbatim beside the built stylesheet, so the
+  # font files resolve as plain siblings of the CSS
+  install -Dm644 "$srcdir/archivo-latin.woff2" client/simple/static/archivo-latin.woff2
+  install -Dm644 "$srcdir/archivo-latin-ext.woff2" client/simple/static/archivo-latin-ext.woff2
+  install -Dm644 "$srcdir/archivo-vietnamese.woff2" client/simple/static/archivo-vietnamese.woff2
+
+  # imported last so the layer wins the cascade
+  grep -q 'themes/timetable/timetable.less' client/simple/src/less/style.less || \
+    echo '@import "themes/timetable/timetable.less";' >> client/simple/src/less/style.less
+
+  printf "  -> %s\n" "rebuilding the client stylesheet"
+  ( cd client/simple
+    npm install --no-audit --no-fund --ignore-scripts
+    npx vite build )
+
+  # the plugin is pure python with no runtime deps; build its wheel with the
+  # system interpreter so setuptools does not have to exist inside the venv
+  ( cd "$srcdir/searxng-bm25-reranker" && rm -rf dist && python -m build --no-isolation --wheel )
+
+  # generate the wheel using the system python-build.
+  # dist/ must be emptied first: makepkg reuses $srcdir, so a wheel from an
+  # earlier commit would still be there and `dist/*.whl` would match both.
+  rm -rf dist
+  python -m build --no-isolation --wheel
+}
+
+package() {
+  cd "$_pkgname"
+
+  unset PYTHONPATH
+
+  local _venv="$pkgdir/var/lib/searxng/venv"
+
+  # uv resolves and installs the whole dependency set in parallel; copy link
+  # mode keeps the payload independent of ~/.cache/uv so that makepkg's strip
+  # stage cannot write through a hardlink into the cache.
+  export UV_LINK_MODE=copy
+  export UV_NO_PROGRESS=1
+  export UV_PYTHON_DOWNLOADS=never
+  export UV_CONCURRENT_BUILDS="$(nproc)"
+  export UV_CONCURRENT_INSTALLS="$(nproc)"
+
+  uv venv --no-project --python "$(command -v python)" "$_venv"
+
+  # runtime requirements + the production WSGI server (granian) + searxng itself
+  uv pip install --python "$_venv/bin/python" \
+    --requirement requirements.txt \
+    --requirement requirements-server.txt \
+    dist/*.whl "$srcdir"/searxng-bm25-reranker/dist/*.whl
+
+  # Custom favicon resolver, registered by favicons.toml's resolver_map. It is
+  # a plain module rather than a patch, so nothing has to be rebased upstream.
+  install -Dm644 "$srcdir/searxng_searxico.py" \
+    "$("$_venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')/searxng_searxico.py"
+
+  # installer metadata records the wheel's location under $srcdir
+  find "$_venv" -name 'direct_url.json' -delete
+
+  # remove references to pkgdir from generated scripts and venv metadata
+  find "$_venv/bin" -maxdepth 1 -type f -exec sed -i "s|${pkgdir}||g" {} +
+  sed -i "s|${pkgdir}||g" "$_venv/pyvenv.cfg"
+
+  # Pre-compile with the final (installed) paths baked into the bytecode, in
+  # parallel across all cores. unchecked-hash avoids mtime-based invalidation,
+  # which would otherwise make the read-only service user recompile on import.
+  # -f is required: uv pre-compiles its own _virtualenv.py shim at venv
+  # creation time, and without forcing, compileall leaves that stale $pkgdir
+  # path in the bytecode.
+  "$_venv/bin/python" -m compileall -q -f -j 0 \
+    --invalidation-mode unchecked-hash \
+    -s "$pkgdir" -p / "$_venv/lib" || true
+
+  # executable
+  install -d "$pkgdir/usr/bin"
+  ln -s "/var/lib/searxng/venv/bin/searxng-run" "$pkgdir/usr/bin/searxng-run"
+
+  # configuration files
+  # modes match searxng.tmpfiles so pacman does not warn about differing
+  # directory permissions on every upgrade
+  install -dm750 "$pkgdir/etc/searxng" "$pkgdir/var/lib/searxng"
+  install -Dm644 "$srcdir/settings.yml.build" "$pkgdir/etc/searxng/settings.yml"
+  install -Dm644 "searx/limiter.toml" "$pkgdir/etc/searxng/limiter.toml"
+  install -Dm644 "$srcdir/favicons.toml" "$pkgdir/etc/searxng/favicons.toml"
+  # The bundled bm25 reranker plugin is AGPL-3.0-or-later too, and ships no
+  # LICENSE file of its own (pyproject declares only the SPDX id), so the
+  # searxng LICENSE installed here covers both.
+  # $pkgname, not "searxng": pacman and namcap both look under the package name,
+  # so licences installed under a different directory are not found at all.
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/LICENSE.archivo-ofl" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.archivo-OFL-1.1"
+  # uv leaves the venv lock mode 0666; nothing should be able to write into a
+  # packaged tree, and namcap flags it.
+  [ -e "$pkgdir/var/lib/searxng/venv/.lock" ] && chmod 0644 "$pkgdir/var/lib/searxng/venv/.lock"
+
+  install -Dm644 "$srcdir/searxng.sysusers" "$pkgdir/usr/lib/sysusers.d/searxng.conf"
+  install -Dm644 "$srcdir/searxng.tmpfiles" "$pkgdir/usr/lib/tmpfiles.d/searxng.conf"
+  install -Dm644 "$srcdir/searxng.service" "$pkgdir/usr/lib/systemd/system/searxng.service"
+
+  # Anna's Archive DDoS-Guard clearance refresher (needs FlareSolverr)
+  install -Dm755 "$srcdir/searxng-annas-ddg-refresh" "$pkgdir/usr/bin/searxng-annas-ddg-refresh"
+  install -Dm644 "$srcdir/searxng-annas-ddg-refresh.service" \
+    "$pkgdir/usr/lib/systemd/system/searxng-annas-ddg-refresh.service"
+  install -Dm644 "$srcdir/searxng-annas-ddg-refresh.timer" \
+    "$pkgdir/usr/lib/systemd/system/searxng-annas-ddg-refresh.timer"
+
+  # documentation
+  install -Dm644 "$srcdir/searxng.example.com.conf" \
+    "$pkgdir/usr/share/doc/searxng/searxng.example.com.conf"
+}
