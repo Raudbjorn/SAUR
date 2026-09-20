@@ -1,0 +1,36 @@
+[favicons]
+
+cfg_schema = 1   # config's schema version no.
+
+[favicons.proxy]
+
+# max_age = 5184000             # 60 days / default: 7 days (604800 sec)
+
+[favicons.proxy.resolver_map]
+#
+# Every resolver selectable via search.favicon_resolver (or a user's
+# preferences) must be listed here. Defining this table replaces SearXNG's
+# implicit single-entry default, so the built-ins are repeated explicitly.
+#
+"duckduckgo" = "searx.favicons.resolvers.duckduckgo"
+"allesedv" = "searx.favicons.resolvers.allesedv"
+"google" = "searx.favicons.resolvers.google"
+"kagi" = "searx.favicons.resolvers.kagi"
+"yandex" = "searx.favicons.resolvers.yandex"
+#
+# Self-hosted searxico worker (https://github.com/Aetherinox/cfworker-searxico).
+# Deploy the worker, then point SEARXICO_BASE_URL at it:
+#     systemctl edit searxng.service
+#     [Service]
+#     Environment=SEARXICO_BASE_URL=https://searxico.<account>.workers.dev
+# and set  search.favicon_resolver: "searxico"  in settings.yml.
+"searxico" = "searxng_searxico.searxico"
+
+[favicons.cache]
+
+# Persist the cache instead of the default /tmp, which PrivateTmp= discards on
+# every restart. The directory is created by searxng's tmpfiles.d snippet.
+db_url = "/var/cache/searxng/favicons/faviconcache.db"
+# HOLD_TIME = 5184000                            # 60 days / default: 30 days
+LIMIT_TOTAL_BYTES = 536870912                    # 512 MB / default: 50 MB
+# BLOB_MAX_BYTES = 40960                         # 40 KB / default 20 KB

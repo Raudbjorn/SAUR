@@ -1,0 +1,16 @@
+[Unit]
+Description=Refresh Anna's Archive DDoS-Guard clearance for SearXNG
+Documentation=https://docs.searxng.org/dev/engines/online/annas_archive.html
+
+[Timer]
+# First mint shortly after boot, then well inside the clearance lifetime.
+# Measured: a clearance minted at 05:47 was already rejected (403) by 05:56,
+# so 10min was too slow; re-minting costs ~2-4s on the reused browser session.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Catch up after downtime so the clearance is never left stale.
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

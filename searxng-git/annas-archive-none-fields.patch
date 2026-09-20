@@ -1,0 +1,80 @@
+--- a/searx/engines/annas_archive.py
++++ b/searx/engines/annas_archive.py
+@@ -224,15 +224,22 @@
+         "title": title_text,
+     }
+ 
+-    result["content"] = extract_text(
+-        xpath_results=eval_xpath_getindex(
+-            element=item,
+-            # the content is in a div with class "relative" and "line-clamp"
+-            xpath_spec=".//div[@class='relative']/div[contains(@class, 'line-clamp')]",
+-            index=0,
+-            default=None,
+-        ),
+-        allow_none=True,
++    # extract_text(allow_none=True) returns None when the element is missing,
++    # but the result container normalizes these fields with a regex and raises
++    # "TypeError: expected string or bytes-like object, got 'NoneType'", which
++    # drops the engine's entire response.  Default them to an empty string.
++    result["content"] = (
++        extract_text(
++            xpath_results=eval_xpath_getindex(
++                element=item,
++                # the content is in a div with class "relative" and "line-clamp"
++                xpath_spec=".//div[@class='relative']/div[contains(@class, 'line-clamp')]",
++                index=0,
++                default=None,
++            ),
++            allow_none=True,
++        )
++        or ""
+     )
+ 
+     result["thumbnail"] = eval_xpath_getindex(
+@@ -243,28 +250,31 @@
+         default=None,
+     )
+ 
+-    result["authors"] = [
++    author = extract_text(
++        xpath_results=eval_xpath_getindex(
++            element=item,
++            # identified by the "user-edit" icon
++            xpath_spec=".//a[.//span[contains(@class, 'icon-[mdi--user-edit]')]]",
++            index=0,
++            default=None,
++        ),
++        allow_none=True,
++    )
++    # a bare list would be [None] for the many records that carry no author
++    result["authors"] = [author] if author else []
++
++    result["publisher"] = (
+         extract_text(
+             xpath_results=eval_xpath_getindex(
+                 element=item,
+-                # identified by the "user-edit" icon
+-                xpath_spec=".//a[.//span[contains(@class, 'icon-[mdi--user-edit]')]]",
++                # identified by the "company" icon
++                xpath_spec=".//a[.//span[contains(@class, 'icon-[mdi--company]')]]",
+                 index=0,
+                 default=None,
+             ),
+             allow_none=True,
+         )
+-    ]
+-
+-    result["publisher"] = extract_text(
+-        xpath_results=eval_xpath_getindex(
+-            element=item,
+-            # identified by the "company" icon
+-            xpath_spec=".//a[.//span[contains(@class, 'icon-[mdi--company]')]]",
+-            index=0,
+-            default=None,
+-        ),
+-        allow_none=True,
++        or ""
+     )
+ 
+     tags_text = extract_text(

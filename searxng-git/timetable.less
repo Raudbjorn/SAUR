@@ -1,0 +1,665 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// Timetable — layout layer. Imported last so it wins the cascade.
+//
+// A result set is a departure board: every row exposes rank, source, claim and
+// provenance at the same four positions, so the eye lands identically on row 1
+// and row 51. Separation is hairlines and alignment; there are no cards, fills,
+// radii or shadows anywhere in this system.
+//
+// Styles upstream's real DOM. No template is forked.
+
+@import "fonts.less";
+
+// ── system ──────────────────────────────────────────────────────────────────
+@rule-w: 1px;
+@rail: 3.25ch; // ordinal column; tabular figures make this exact
+@gut: 1.25rem;
+@eng-col: 12rem;
+
+// Narrow is the width axis of the same file, not a second family.
+.narrow(@stretch: 78%) {
+  font-stretch: @stretch;
+}
+.tab-nums() {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.col-label() {
+  .narrow(70%);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-result-engines-font);
+}
+
+html {
+  font-family: "Archivo", system-ui, sans-serif;
+  // browser surfaces belong to the design system too
+  accent-color: var(--color-btn-background);
+  caret-color: var(--color-btn-background);
+  scrollbar-color: var(--color-result-border) var(--color-base-background);
+  scrollbar-width: thin;
+}
+
+body {
+  font-family: "Archivo", system-ui, sans-serif;
+  font-size: var(--fs-base);
+  background: var(--color-base-background);
+}
+
+::selection {
+  background: var(--color-btn-background);
+  color: var(--color-base-background);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-btn-background);
+  outline-offset: 2px;
+}
+
+a {
+  text-underline-offset: 0.18em;
+  text-decoration-thickness: from-font;
+}
+
+// ── head band ───────────────────────────────────────────────────────────────
+#search {
+  background: var(--color-base-background);
+  border-bottom: @rule-w solid var(--color-header-border);
+  padding-top: 0.5rem;
+  padding-bottom: 0;
+}
+
+#search_header {
+  gap: @gut;
+  align-items: center;
+}
+
+// the magnifier lockup is the only mark this instance has; keep it quiet
+#search_logo svg,
+#search_logo img {
+  filter: grayscale(1) contrast(1.4);
+  opacity: 0.85;
+}
+
+#q,
+#send_search,
+#clear_search {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#search_view {
+  max-width: @search-width;
+  border: @rule-w solid var(--color-search-border);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--color-search-background);
+
+  &:focus-within {
+    border-color: var(--color-btn-background);
+  }
+}
+
+#q {
+  font-family: inherit;
+  font-size: var(--fs-title);
+  .narrow(88%);
+}
+
+// category strip: one rule-separated row of labels, current in signal
+#categories,
+.category_button {
+  border-radius: 0;
+}
+
+#categories_container {
+  border-top: @rule-w solid var(--color-header-border);
+}
+
+.category_button,
+#categories .category_button {
+  .col-label();
+  border: 0;
+  border-bottom: @rule-w solid transparent;
+  background: transparent;
+  padding: 0.5rem 0.1rem;
+
+  &.selected,
+  &:hover {
+    color: var(--color-categories-item-selected-font);
+    border-bottom-color: var(--color-categories-item-border-selected);
+  }
+}
+
+// filter row reads as instrument labels, not form chrome
+#search_filters select,
+.search_filters select {
+  .narrow(78%);
+  border: 0;
+  border-bottom: @rule-w solid var(--color-toolkit-select-border);
+  border-radius: 0;
+  background-color: transparent;
+  font-family: inherit;
+  font-size: var(--fs-label);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+// ── home ────────────────────────────────────────────────────────────────────
+.index {
+  // upstream centres #search and #search_header but not the field inside them
+  #search_view {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+}
+
+// The shipped wordmark is upstream's blue PNG, and blue is not a hue this
+// system has. Desaturated like the favicons — no mark is invented, the existing
+// one just stops fighting the palette. It arrives two ways: a background image
+// on .index .title at home, and an <img class="logo"> in the head of every
+// other page, so both are named here.
+.index .title,
+img.logo {
+  filter: grayscale(1) contrast(1.08);
+  opacity: 0.85;
+}
+
+// ── results field ───────────────────────────────────────────────────────────
+#results {
+  max-width: none;
+}
+
+#urls {
+  counter-reset: rank;
+  position: relative;
+  margin: 0;
+
+  // One head, pinned, on an opaque ground so rows pass under it. A pseudo
+  // element carries a single text node, so RANK rides here and the ENGINES
+  // label sits on the column it names (see .engines below) rather than in a
+  // second pseudo that desyncs from the row grid at tablet width. Recorded as
+  // a deviation from the contract's four-label head.
+  &::before {
+    content: "RANK";
+    .col-label();
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    // spans the results column and no further: an earlier full-bleed ground
+    // (box-shadow spread + clip-path) painted over the sidebar at every scroll
+    // position and hid the engine panel's summary line
+    display: grid;
+    grid-template-columns: @rail @gut minmax(0, 1fr);
+    padding: 0.45rem 0 0.35rem;
+    text-align: right;
+    background: var(--color-base-background);
+    border-bottom: @rule-w solid var(--color-result-border);
+  }
+}
+
+article.result {
+  display: grid;
+  grid-template-columns: @rail @gut auto minmax(0, 1fr) @gut @eng-col;
+  grid-template-areas: "rank . media main . eng";
+  align-items: start;
+  margin: 0;
+  padding: 0.62rem 0;
+  border: 0;
+  border-bottom: @rule-w solid var(--color-result-border);
+  background: transparent;
+
+  // The ordinal rail. Always reserved, so selection never shifts a row.
+  &::before {
+    content: counter(rank);
+    counter-increment: rank;
+    grid-area: rank;
+    .tab-nums();
+    .narrow(70%);
+    align-self: stretch;
+    padding-right: 0.7rem;
+    border-right: @rule-w solid var(--color-result-border);
+    font-size: var(--fs-label);
+    font-weight: 600;
+    line-height: 1.55;
+    text-align: right;
+    color: var(--color-result-engines-font);
+  }
+
+  &:hover,
+  &.vim-selected,
+  &:focus-within {
+    background: var(--color-result-vim-selected);
+
+    &::before {
+      background: var(--color-btn-background);
+      color: var(--color-btn-font);
+      border-right-color: var(--color-btn-background);
+    }
+  }
+
+  // media is fixed-size and never wrapped around by text: it takes its own
+  // track, which collapses to zero on the rows that carry no thumbnail
+  > a.thumbnail_link {
+    grid-area: media;
+    float: none;
+    margin-right: @gut;
+    line-height: 0;
+
+    img.thumbnail {
+      display: block;
+      width: 7rem;
+      height: auto;
+      border-radius: 0;
+    }
+  }
+
+  // upstream wraps the row's content; the inner stack is source, claim, snippet
+  > .result_inner {
+    grid-area: main;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  // provenance: fixed column, typographic, never colour-coded
+  > .engines {
+    grid-area: eng;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.18rem 0.45rem;
+    align-items: baseline;
+    align-content: flex-start;
+    justify-content: flex-start;
+    margin: 0;
+    padding-top: 0.12rem;
+    line-height: 1.3;
+
+    span {
+      .col-label();
+      font-size: var(--fs-micro);
+      background: transparent;
+      padding: 0;
+      border: 0;
+    }
+
+    // a zero-height full-width flex item: breaks the line so the control pair
+    // always starts at the same x on its own row, instead of trailing the
+    // engine names at a different position on every result
+    &::before {
+      content: "";
+      order: 7;
+      flex: 0 0 100%;
+      height: 0;
+    }
+
+    svg {
+      order: 8;
+      width: 0.75rem;
+      height: 0.75rem;
+      color: var(--color-result-url-font);
+    }
+
+    a.cache_link {
+      .col-label();
+      order: 9;
+      font-size: var(--fs-micro);
+      color: var(--color-result-url-font);
+    }
+  }
+
+  > .break {
+    display: none;
+  }
+}
+
+.result_inner {
+  // source before claim
+  > a.url_header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    padding: 0;
+    font-size: var(--fs-label);
+    .narrow(80%);
+    color: var(--color-result-url-font);
+  }
+
+  .url_wrapper {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .favicon {
+    display: flex;
+    margin: 0;
+
+    img {
+      width: 13px;
+      height: 13px;
+      border-radius: 0;
+      border: 0;
+      background: transparent;
+      // colour in this system means state; a favicon carrying provenance by
+      // hue competes with the signal, so it is desaturated like the lockup
+      filter: grayscale(1) contrast(1.05);
+      opacity: 0.8;
+    }
+  }
+
+  > h3 {
+    margin: 0;
+    font-size: var(--fs-title);
+    line-height: 1.28;
+
+    a {
+      font-size: 1em;
+      font-weight: 600;
+      .narrow(92%);
+      color: var(--color-result-link-font);
+      text-decoration: none;
+
+      &:visited {
+        color: var(--color-result-link-visited-font);
+      }
+
+      &:hover {
+        text-decoration: underline;
+      }
+
+      b {
+        font-weight: 700;
+        color: inherit;
+      }
+    }
+  }
+
+  > p.content {
+    margin: 0.05rem 0 0;
+    font-size: var(--fs-body);
+    line-height: 1.38;
+    color: var(--color-result-engines-font);
+
+    b {
+      font-weight: 600;
+      color: var(--color-base-font);
+    }
+  }
+
+  // the date is pushed below the snippet so the two can never collide
+  > time.published_date {
+    order: 9;
+    .tab-nums();
+    .narrow(72%);
+    margin-top: 0.1rem;
+    font-size: var(--fs-meta);
+    letter-spacing: 0.04em;
+    color: var(--color-result-publishdate-font);
+  }
+
+}
+
+// ── sidebar as instrument panel ─────────────────────────────────────────────
+#sidebar {
+  // upstream leaves this display:block, where `order` on a child is inert;
+  // the panel has to become a flex container before it can be reordered
+  display: flex;
+  flex-direction: column;
+  border-left: @rule-w solid var(--color-sidebar-border);
+  padding-left: @gut;
+
+  // engine state leads the panel: diagnosis is the third goal of this surface
+  #engines_msg {
+    order: -1;
+
+    // and it ships open, so failures and timings are readable without a click
+    details::details-content {
+      content-visibility: visible;
+      block-size: auto;
+    }
+
+    details:not([open]) > *:not(summary) {
+      display: revert;
+    }
+  }
+}
+
+#sidebar details,
+.sidebar-collapsible {
+  border: 0;
+  border-bottom: @rule-w solid var(--color-sidebar-border);
+  border-radius: 0;
+  background: transparent;
+
+  > summary.title {
+    .col-label();
+    padding: 0.5rem 0;
+    background: transparent;
+    border: 0;
+  }
+}
+
+.engine-stats {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-meta);
+
+  td {
+    padding: 0.16rem 0;
+    border: 0;
+    vertical-align: baseline;
+  }
+
+  .engine-name {
+    .narrow(72%);
+    letter-spacing: 0.03em;
+
+    a {
+      color: var(--color-base-font);
+      text-decoration: none;
+    }
+  }
+
+  // a failed engine is the one thing in the panel that gets the signal
+  .response-error {
+    .col-label();
+    font-size: var(--fs-micro);
+    text-align: right;
+    color: var(--color-error);
+  }
+
+  .response-time {
+    .tab-nums();
+    text-align: right;
+  }
+
+  .bar-chart-value {
+    .tab-nums();
+    .narrow(70%);
+    font-size: var(--fs-meta);
+    color: var(--color-result-engines-font);
+  }
+
+  .bar-chart-bar {
+    border-radius: 0;
+    background: var(--color-bar-chart-primary);
+    opacity: 0.55;
+  }
+}
+
+// ── messages, errors, empty ─────────────────────────────────────────────────
+.dialog-error,
+.dialog-error-block {
+  // one rule weight governs the whole system, alerts included: a hairline box
+  // in signal, never a thick side tab
+  border: @rule-w solid var(--color-error);
+  border-radius: 0;
+  background: var(--color-error-background);
+  box-shadow: none;
+  padding: 0.7rem 0.9rem;
+  font-size: var(--fs-body);
+}
+
+// a notice is not a failure: it takes the ordinary rule, so signal keeps meaning
+.dialog-modal,
+.message {
+  border: @rule-w solid var(--color-result-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0.7rem 0.9rem;
+  font-size: var(--fs-body);
+}
+
+// ── controls ────────────────────────────────────────────────────────────────
+button,
+.btn,
+input[type="submit"],
+#send_search {
+  border-radius: 0;
+  box-shadow: none;
+  font-family: inherit;
+  .narrow(80%);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: var(--fs-label);
+  font-weight: 600;
+}
+
+// Only the primary action wears signal. --color-btn-background is dual-purpose
+// upstream — it drives focus rings, ::selection and the result hover marker as
+// well as button fills — so it stays signal and the FILL uses are out-specified
+// here instead. Upstream reaches for #main_preferences, so we match it.
+// "Back" and "Reset defaults" are navigation, and a suggestion chip is a query,
+// not an action; only Save keeps the red. .button is claimed whole: its three
+// uses in the templates are Copy URL, Copy hash and the Enable/Disable all
+// engine toggles, none of them a primary action. button.button out-specifies
+// upstream's bare .button rather than relying on source order.
+#main_preferences .preferences_back,
+#suggestions input[type="submit"],
+#infoboxes input[type="submit"],
+#corrections input[type="submit"],
+button.button,
+button.btn-default,
+a.btn {
+  background: var(--color-base-background);
+  border: @rule-w solid var(--color-result-border);
+  color: var(--color-base-font);
+
+  &:hover {
+    background: var(--color-result-vim-selected);
+  }
+}
+
+// the return link inherits the fill it sits on, not the old signal-on-red pair
+#main_preferences .preferences_back a {
+  color: var(--color-base-font);
+}
+
+kbd {
+  border-radius: 0;
+  border: @rule-w solid var(--color-toolkit-kbd-background);
+  .narrow(74%);
+  font-family: inherit;
+}
+
+// tabular data in stats/preferences reads as a timetable too
+table {
+  border-collapse: collapse;
+
+  th {
+    .col-label();
+    text-align: left;
+    border-bottom: @rule-w solid var(--color-result-border);
+    padding: 0.4rem 0.6rem 0.4rem 0;
+  }
+
+  td {
+    .tab-nums();
+    border-bottom: @rule-w solid var(--color-result-border);
+    padding: 0.35rem 0.6rem 0.35rem 0;
+  }
+}
+
+// ── image and video grids keep their own shape ──────────────────────────────
+// no columns on these tabs, so the column heads must not render either
+#urls:has(> article.result-images)::before,
+#urls:has(> article.result-videos)::before {
+  content: none;
+}
+
+
+article.result-images,
+article.result-videos {
+  display: block;
+  border-bottom: 0;
+  padding: 0;
+
+  &::before {
+    content: none;
+  }
+}
+
+// ── responsive: columns drop from the outside in ────────────────────────────
+@media screen and (max-width: @tablet) {
+  article.result {
+    grid-template-columns: @rail @gut auto minmax(0, 1fr);
+    grid-template-areas:
+      "rank . media main"
+      "rank . eng   eng";
+
+    > .engines {
+      margin-top: 0.25rem;
+    }
+  }
+}
+
+@media screen and (max-width: @phone) {
+  // #results is a grid placed by explicit template areas, where `order` has no
+  // effect; the running order is changed by restating the areas themselves.
+  // Upstream places these with the `grid-template` SHORTHAND (areas + row sizes
+  // + columns in one declaration). Overriding only the areas longhand leaves
+  // the shorthand's own areas in play, so the override has to be a shorthand
+  // too, in the same form.
+  #results {
+    grid-template:
+      "corrections" min-content
+      "answers" min-content
+      "urls" 1fr
+      "sidebar" min-content
+      "pagination" min-content / 100%;
+  }
+
+  #sidebar {
+    border-left: 0;
+    border-top: @rule-w solid var(--color-sidebar-border);
+    padding-left: 0;
+  }
+
+
+  article.result {
+    grid-template-columns: 2.5ch 0.75rem auto minmax(0, 1fr);
+
+    &::before {
+      padding-right: 0.4rem;
+      font-size: var(--fs-meta);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

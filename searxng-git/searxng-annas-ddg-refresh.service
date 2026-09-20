@@ -1,0 +1,44 @@
+[Unit]
+Description=Mint Anna's Archive DDoS-Guard clearance cookies for SearXNG
+Documentation=https://docs.searxng.org/dev/engines/online/annas_archive.html
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Group + UMask make the output land as root:searxng 0640 without any chown();
+# @privileged (denied below) contains @chown, and a denied syscall is SIGSYS.
+Group=searxng
+UMask=0027
+# FlareSolverr must be reachable at this address; override with a drop-in:
+# systemctl edit searxng-annas-ddg-refresh.service
+Environment=FLARESOLVERR_URL=http://127.0.0.1:8191/v1
+Environment=ANNAS_PROBE_URL=https://annas-archive.gl/search?q=test
+Environment=OUTPUT_FILE=/var/cache/searxng/annas-ddg-clearance.json
+Environment=FLARESOLVERR_SESSION=searxng-annas
+ExecStart=/usr/bin/searxng-annas-ddg-refresh
+
+# Runs as root only to write a file owned root:searxng.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ReadWritePaths=/var/cache/searxng
+ProtectHome=yes
+ProtectProc=invisible
+ProtectClock=yes
+ProtectHostname=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# re-allow chown so the script's best-effort fallback cannot core-dump the unit
+SystemCallFilter=@chown

@@ -1,0 +1,70 @@
+--- a/searx/engines/annas_archive.py
++++ b/searx/engines/annas_archive.py
+@@ -35,6 +35,7 @@
+ 
+ """
+ 
++import json
+ import random
+ import typing as t
+ from urllib.parse import urlencode
+@@ -95,6 +96,39 @@
+ 
+ """
+ 
++ddg_cookie_file: str = ""
++"""Path of a JSON file holding DDoS-Guard clearance cookies and the user agent
++they were issued to, as written by ``searxng-annas-ddg-refresh``.
++
++Anna's Archive sits behind DDoS-Guard, which answers plain HTTP clients with a
++403 challenge page; the engine then finds no results and reports no error.
++Replaying a clearance cookie set makes ordinary requests succeed.  Leave this
++empty (default) to send no cookies.
++"""
++
++
++def _load_ddg_clearance() -> tuple[dict[str, str], str]:
++    """Read cookies and user agent from :py:obj:`ddg_cookie_file`.
++
++    Returns empty values when the setting is unset or the file cannot be used;
++    the request is then sent unauthenticated, exactly as without this patch.
++    """
++    if not ddg_cookie_file:
++        return {}, ""
++    try:
++        with open(ddg_cookie_file, encoding="utf-8") as api_file:
++            data = json.load(api_file)
++    except (OSError, ValueError) as exc:
++        logger.warning("can't read ddg_cookie_file %s: %s", ddg_cookie_file, exc)
++        return {}, ""
++
++    cookies = data.get("cookies") or {}
++    user_agent = data.get("user_agent") or ""
++    if not isinstance(cookies, dict) or not isinstance(user_agent, str):
++        logger.warning("unexpected content in ddg_cookie_file %s", ddg_cookie_file)
++        return {}, ""
++    return cookies, user_agent
++
+ 
+ def setup(_engine_settings: dict[str, t.Any]) -> bool:
+     """Check of engine's settings."""
+@@ -139,6 +173,19 @@
+     params["base_url"] = _get_base_url_choice()
+     params["url"] = f"{params['base_url']}/search?{urlencode(filtered_args)}"
+ 
++    cookies, user_agent = _load_ddg_clearance()
++    if cookies:
++        params["cookies"] = cookies
++        # Anna's Archive bounces /search once to "&check=1" to verify the
++        # DDoS-Guard cookie.  Online engines do not follow redirects by
++        # default, which would leave us with the 302 body and no results.
++        params["allow_redirects"] = True
++        params["max_redirects"] = 2
++        params["soft_max_redirects"] = 2
++    if user_agent:
++        # the clearance is bound to the user agent it was issued to
++        params["headers"]["User-Agent"] = user_agent
++
+ 
+ def response(resp: "SXNG_Response") -> EngineResults:
+     res = EngineResults()

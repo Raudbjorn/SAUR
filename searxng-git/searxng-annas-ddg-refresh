@@ -1,0 +1,140 @@
+#!/usr/bin/env python
+"""Mint DDoS-Guard clearance cookies for Anna's Archive via FlareSolverr.
+
+Anna's Archive sits behind DDoS-Guard, which answers plain HTTP clients with a
+403 challenge page.  SearXNG's annas_archive engine cannot solve that challenge,
+and because the engine never raises on a bad status it simply reports zero
+results.  FlareSolverr can solve it; the clearance cookies it obtains are then
+replayed by ordinary requests, so the browser is only needed to mint them, not
+on every query.
+
+Writes ``{"cookies": {...}, "user_agent": "...", "minted": <epoch>}`` to
+OUTPUT_FILE, readable by the searxng service user.
+"""
+
+import grp
+import json
+import logging
+import os
+import pwd
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+FLARESOLVERR_URL = os.environ.get("FLARESOLVERR_URL", "http://127.0.0.1:8191/v1")
+PROBE_URL = os.environ.get("ANNAS_PROBE_URL", "https://annas-archive.gl/search?q=test")
+OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "/var/cache/searxng/annas-ddg-clearance.json")
+SESSION = os.environ.get("FLARESOLVERR_SESSION", "searxng-annas")
+OWNER_GROUP = os.environ.get("OWNER_GROUP", "searxng")
+MAX_TIMEOUT_MS = int(os.environ.get("FLARESOLVERR_MAX_TIMEOUT_MS", "90000"))
+HTTP_TIMEOUT_S = int(os.environ.get("HTTP_TIMEOUT_S", "180"))
+
+# the marker that tells a real result page from a challenge page
+RESULT_MARKER = "js-aarecord-list-outer"
+
+log = logging.getLogger("annas-ddg-refresh")
+
+
+def call(payload: dict) -> dict:
+    """POST one command to FlareSolverr and return the decoded reply."""
+    req = urllib.request.Request(
+        FLARESOLVERR_URL,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
+        return json.load(resp)
+
+
+def ensure_session() -> None:
+    """Create the reusable browser session if it is not there yet.
+
+    Reusing a session turns a ~28 s challenge solve into a ~2 s request.
+    """
+    listed = call({"cmd": "sessions.list"})
+    if SESSION in (listed.get("sessions") or []):
+        return
+    log.info("creating FlareSolverr session %s", SESSION)
+    created = call({"cmd": "sessions.create", "session": SESSION})
+    if created.get("status") != "ok":
+        raise RuntimeError(f"cannot create session: {created.get('message')}")
+
+
+def fetch() -> dict:
+    """Solve the challenge and return FlareSolverr's solution."""
+    reply = call(
+        {
+            "cmd": "request.get",
+            "session": SESSION,
+            "url": PROBE_URL,
+            "maxTimeout": MAX_TIMEOUT_MS,
+        }
+    )
+    if reply.get("status") != "ok":
+        raise RuntimeError(f"request.get failed: {reply.get('message')}")
+    return reply.get("solution") or {}
+
+
+def write_atomic(payload: dict) -> None:
+    """Replace OUTPUT_FILE in one step, 0640 root:<OWNER_GROUP>."""
+    directory = os.path.dirname(OUTPUT_FILE)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".annas-ddg-")
+    try:
+        os.write(fd, json.dumps(payload, indent=2).encode())
+        os.close(fd)
+        os.chmod(tmp, 0o640)
+        try:
+            wanted_gid = grp.getgrnam(OWNER_GROUP).gr_gid
+            # Skip the syscall when the file already has the right group: under
+            # systemd this unit runs with Group=searxng, and chown() is filtered
+            # out of the sandbox.
+            if os.stat(tmp).st_gid != wanted_gid:
+                os.chown(tmp, pwd.getpwnam("root").pw_uid, wanted_gid)
+        except (KeyError, PermissionError, OSError) as exc:
+            log.warning("cannot set ownership on %s: %s", tmp, exc)
+        os.replace(tmp, OUTPUT_FILE)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def main() -> int:
+    logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.INFO)
+
+    try:
+        ensure_session()
+        solution = fetch()
+    except (urllib.error.URLError, OSError, RuntimeError, ValueError) as exc:
+        log.error("FlareSolverr at %s: %s", FLARESOLVERR_URL, exc)
+        return 1
+
+    body = solution.get("response") or ""
+    if RESULT_MARKER not in body:
+        # a solved challenge that still yields no result page means the probe
+        # URL or the site markup changed; writing those cookies would be a lie
+        log.error(
+            "solved page has no %r marker (status %s, %d bytes) - not writing",
+            RESULT_MARKER,
+            solution.get("status"),
+            len(body),
+        )
+        return 1
+
+    cookies = {c["name"]: c["value"] for c in solution.get("cookies") or []}
+    user_agent = solution.get("userAgent") or ""
+    if not cookies:
+        log.error("no cookies in solution - not writing")
+        return 1
+
+    write_atomic({"cookies": cookies, "user_agent": user_agent, "minted": int(time.time())})
+    log.info("wrote %d cookies to %s", len(cookies), OUTPUT_FILE)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
