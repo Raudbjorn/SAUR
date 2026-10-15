@@ -1,0 +1,28 @@
+pkgbase = photoqt-extensions-git
+	pkgdesc = Official extensions for the PhotoQt image viewer
+	pkgver = 5.4.1.r0.g1e39f93
+	pkgrel = 1
+	url = https://photoqt.org/
+	arch = x86_64
+	license = GPL-2.0-or-later
+	makedepends = git
+	makedepends = cmake
+	makedepends = ninja
+	makedepends = qt6-tools
+	depends = glibc
+	depends = libgcc
+	depends = libstdc++
+	depends = photoqt
+	depends = qt6-base
+	depends = qt6-charts
+	depends = qt6-declarative
+	depends = qt6-location
+	depends = qt6-positioning
+	provides = photoqt-extensions=5.4.1.r0.g1e39f93
+	conflicts = photoqt-extensions
+	conflicts = photoqt-extensions-bin
+	conflicts = photoqt-extensions-bin-debug
+	source = photoqt-extensions::git+https://gitlab.com/lspies/photoqt-extensions.git#branch=master
+	sha256sums = SKIP
+
+pkgname = photoqt-extensions-git

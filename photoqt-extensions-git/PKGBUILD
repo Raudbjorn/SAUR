@@ -1,0 +1,44 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Lukas Spies <lukas (at) photoqt _dot_ org>
+
+pkgname=photoqt-extensions-git
+_pkgname=photoqt-extensions
+pkgver=5.4.1.r0.g1e39f93
+pkgrel=1
+pkgdesc='Official extensions for the PhotoQt image viewer'
+arch=('x86_64')
+url='https://photoqt.org/'
+license=('GPL-2.0-or-later')
+# Plugins link Qt6 Core/Gui/Widgets/DBus/Sql/Network (qt6-base). Their QML imports the
+# PhotoQt module (built into the host app), QtQuick (qt6-declarative), QtCharts (Histogram),
+# QtLocation and QtPositioning (MapCurrent).
+depends=(
+  'glibc' 'libgcc' 'libstdc++' 'photoqt' 'qt6-base' 'qt6-charts' 'qt6-declarative'
+  'qt6-location' 'qt6-positioning'
+)
+makedepends=('git' 'cmake' 'ninja' 'qt6-tools')
+provides=("$_pkgname=$pkgver")
+conflicts=("$_pkgname" 'photoqt-extensions-bin' 'photoqt-extensions-bin-debug')
+source=("$_pkgname::git+https://gitlab.com/lspies/photoqt-extensions.git#branch=master")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+build() {
+  # Ninja ignores MAKEFLAGS; carry its -jN over so deliberate throttling is respected.
+  local _jobs
+  _jobs=$(grep -oP '(?<=-j)\s*\d+' <<< "$MAKEFLAGS" | tr -d ' ')
+  export CMAKE_BUILD_PARALLEL_LEVEL="${_jobs:-$(nproc)}"
+
+  cmake -S "$_pkgname" -B build -G Ninja \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
