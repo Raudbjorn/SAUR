@@ -17,6 +17,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`python-docling-ibm-models`](python-docling-ibm-models/) | TableFormer and layout models; 4.0.2 is the floor `docling` requires | Buildable |
 | [`python-docling-parse`](python-docling-parse/) | Programmatic-PDF extraction; the stack's only compiled package | Buildable |
 | [`python-installer`](python-installer/) | Temporary 1.0.1 bridge required to build AUR `python-rapidocr` | Remove after configured repositories ship 1.0.1 or newer |
+| [`python-pychromecast-git`](python-pychromecast-git/) | Chromecast client library from upstream `master`; satisfies PhotoQt's `python-pychromecast` dependency | Buildable; import smoke test only, no device tested |
 | [`python-semchunk`](python-semchunk/) | Semantic chunking for `docling-core`'s `chunking` extra | Buildable; 4.1.1 exceeds an advisory upstream cap, verified against fixtures |
 | [`python-tree-sitter-c`](python-tree-sitter-c/) | `tree_sitter_c` grammar module for code-aware chunking | Buildable |
 | [`python-tree-sitter-javascript`](python-tree-sitter-javascript/) | `tree_sitter_javascript` grammar module for code-aware chunking | Buildable |
@@ -69,6 +70,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Temporary repository-version bridge
 │   └── README.md            # Removal condition and build notes
+├── python-pychromecast-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; requests dependency, build-cap skip
+│   └── README.md            # Differences from extra and AUR, upstream deprecations
 ├── python-semchunk/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── package_test.py      # check() helper, referenced by source()

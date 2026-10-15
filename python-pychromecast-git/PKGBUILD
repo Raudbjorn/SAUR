@@ -1,0 +1,67 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Martin Rys <https://rys.rs/contact>
+# Contributor: Luis Martinez <luis dot martinez at disroot dot org>
+# Contributor: Mark Wagie <mark dot wagie at proton dot me>
+# Contributor: Michael Riegert <michael at eowyn net>
+# Contributor: Felix Golatofski <contact@xdfr.de>
+# Contributor: Sibren Vasse <arch@sibrenvasse.nl>
+# Contributor: Daniel M. Capella <polyzen@archlinux.info>
+# Contributor: Morten Linderud <morten@linderud.pw>
+
+_pkgname=pychromecast
+pkgname="python-${_pkgname}-git"
+pkgver=14.0.10.r86.g9527bc4
+pkgrel=1
+pkgdesc='Library for Python to communicate with the Google Chromecast'
+arch=('any')
+url="https://github.com/home-assistant-libs/${_pkgname}"
+license=('MIT')
+depends=(
+  'python'
+  'python-casttube'
+  'python-protobuf'
+  # Imported directly by config.py and controllers/youtube.py; upstream only
+  # receives it transitively through casttube.
+  'python-requests'
+  'python-zeroconf'
+)
+makedepends=(
+  'git'
+  'python-build'
+  'python-installer'
+  'python-setuptools'
+)
+checkdepends=('python-pytest')
+provides=("python-${_pkgname}")
+conflicts=("python-${_pkgname}")
+source=("${_pkgname}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd -- "${_pkgname}" || return 1
+  git describe --long --tags --abbrev=7 \
+    | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+build() {
+  cd -- "${_pkgname}" || return 1
+  # Upstream's build-system ceilings (setuptools<85, wheel<0.49) are bumped by
+  # dependabot and routinely lag the rolling repositories. wheel is unused since
+  # setuptools 70.1 ships bdist_wheel. Skip the check so a setuptools update
+  # does not break an otherwise unchanged build.
+  python -m build --wheel --no-isolation --skip-dependency-check
+}
+
+check() {
+  cd -- "${_pkgname}" || return 1
+  # Keep unrelated system-wide pytest plugins (randomly, hypothesis, ...) out
+  # of the run.
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH="${PWD}" \
+    python -m pytest -p no:cacheprovider tests
+}
+
+package() {
+  cd -- "${_pkgname}" || return 1
+  python -m installer --destdir="${pkgdir}" --compile-bytecode 0 --compile-bytecode 1 dist/*.whl
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
