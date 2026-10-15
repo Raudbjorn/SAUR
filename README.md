@@ -9,6 +9,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 
 | Package | Description | Status |
 | --- | --- | --- |
+| [`caprine-electron44`](caprine-electron44/) | Caprine (Facebook Messenger) on the system Electron 44 runtime; ~25 MB less installed payload than AUR `caprine` | Buildable; smoke-tested to the login page, logged-in features untested |
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
@@ -33,6 +34,11 @@ SAUR/
 ├── docs/
 │   ├── packaging-guide.md   # Local packaging and review workflow
 │   └── template.PKGBUILD    # Starting point for a new recipe
+├── caprine-electron44/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── caprine.sh           # Launcher; @ELECTRON@ substituted in prepare()
+│   ├── PKGBUILD             # Electron 44, semver-range dependency refresh
+│   └── README.md            # Size reductions, floating deps, smoke test
 ├── docling/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # CLI recipe; typer/transformers/websockets relaxations
