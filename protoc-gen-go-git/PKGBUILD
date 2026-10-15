@@ -1,0 +1,97 @@
+# Maintainer:  Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Vitalii Kuzhdin <vitaliikuzhdin@gmail.com>
+# Contributor: Aliaksandr Mianzhynski <amenzhinsky@gmail.com>
+
+pkgname="protoc-gen-go-git"
+pkgver=1.36.12.r12.g3933e75
+pkgrel=1
+pkgdesc="Go support for Google's protocol buffers (VCS build)"
+arch=(
+  'aarch64'
+  'i686'
+  'x86_64'
+)
+url="https://github.com/protocolbuffers/protobuf-go"
+license=(
+  'BSD-3-Clause'
+)
+depends=(
+  'glibc'
+  'protobuf'
+)
+makedepends=(
+  'git'
+  'go'
+)
+provides=(
+  "protoc-gen-go=${pkgver}"
+  "protobuf-go=${pkgver}"
+)
+conflicts=(
+  'protoc-gen-go'
+  'protobuf-go'
+)
+_pkgsrc="${url##*/}"
+source=(
+  "${_pkgsrc}::git+${url}.git#branch=master"
+)
+sha256sums=('SKIP')
+
+# Go build parallelism follows MAKEFLAGS -jN so deliberate throttling is respected.
+_go_jobs() {
+  if [[ "${MAKEFLAGS}" =~ -j[[:space:]]*([0-9]+) ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    nproc
+  fi
+}
+
+# GOAMD64 is deliberately not set here: Go reads it from the environment, so
+# `GOAMD64=v4 makepkg` produces a host-tuned binary (see README.md).
+_go_env() {
+  export CGO_CPPFLAGS="${CPPFLAGS}"
+  export CGO_CFLAGS="${CFLAGS}"
+  export CGO_CXXFLAGS="${CXXFLAGS}"
+  export CGO_LDFLAGS="${LDFLAGS}"
+  export GOCACHE="${srcdir}/go-cache"
+  export GOMODCACHE="${srcdir}/go-mod-cache"
+  export GOTOOLCHAIN="local"
+  export GOFLAGS="-buildmode=pie -trimpath -ldflags=-linkmode=external -mod=readonly -modcacherw -p=$(_go_jobs)"
+}
+
+pkgver() {
+  cd "${srcdir}/${_pkgsrc}"
+  git describe --long --tags --abbrev=7 --match 'v*' | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  export GOMODCACHE="${srcdir}/go-mod-cache"
+  export GOTOOLCHAIN="local"
+
+  cd "${srcdir}/${_pkgsrc}"
+  go mod download -modcacherw -x
+  go mod verify
+
+  mkdir -p "build"
+}
+
+build() {
+  _go_env
+
+  cd "${srcdir}/${_pkgsrc}"
+  go build -v -o "build/${pkgname%-git}" ./"cmd/${pkgname%-git}"
+}
+
+check() {
+  _go_env
+
+  cd "${srcdir}/${_pkgsrc}"
+  go test ./...
+}
+
+package() {
+  cd "${srcdir}/${_pkgsrc}"
+  install -vDm755 "build/${pkgname%-git}" "${pkgdir}/usr/bin/${pkgname%-git}"
+  install -vDm644 "README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -vDm644 "LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
