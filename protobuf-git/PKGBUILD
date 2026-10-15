@@ -1,0 +1,208 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Chocobo1 <chocobo1 AT archlinux DOT net>
+
+pkgbase=protobuf-git
+pkgname=('protobuf-git' 'python-protobuf-git')
+pkgver=36.2.r920.g686bbc5ab8
+pkgrel=1
+pkgdesc="Google's data interchange format"
+arch=('x86_64')
+url="https://developers.google.com/protocol-buffers/"
+license=('BSD-3-Clause')
+makedepends=('git' 'cmake' 'ninja' 'gtest' 'python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+checkdepends=('python-pytest' 'python-numpy')
+source=("git+https://github.com/protocolbuffers/protobuf.git")
+sha256sums=('SKIP')
+
+
+prepare() {
+  cd "protobuf"
+
+  git submodule update --init --recursive
+}
+
+pkgver() {
+  cd "protobuf"
+
+  # Only plain release tags (vN.M): upstream also tags vNN-dev / vNN.M-rcK,
+  # whose hyphens are illegal in pkgver.
+  _tag=$(git tag -l --sort -v:refname | grep -E '^v[0-9]+(\.[0-9]+)*$' | head -n1)
+  _rev=$(git rev-list --count "$_tag"..HEAD)
+  _hash=$(git rev-parse --short HEAD)
+  printf "%s.r%s.g%s" "$_tag" "$_rev" "$_hash" | sed 's/^v//'
+}
+
+build() {
+  cd "protobuf"
+
+  # No -ffat-lto-objects: the only static archive (libupb.a) is removed by
+  # !staticlibs, so fat objects would just duplicate codegen for every TU.
+  # -fmacro-prefix-map: absl LOG/CHECK embed __FILE__; strip the build path so
+  # diagnostics read "src/google/protobuf/..." and the output is reproducible.
+  CFLAGS="$CFLAGS -fmacro-prefix-map=$srcdir/protobuf/=" \
+  CXXFLAGS="$CXXFLAGS -fmacro-prefix-map=$srcdir/protobuf/=" \
+  cmake \
+    -B "_build" \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="/usr" \
+    -DBUILD_SHARED_LIBS=ON \
+    -Dprotobuf_ABSL_PROVIDER=package \
+    -Dprotobuf_BUILD_TESTS=OFF \
+    -Dprotobuf_USE_EXTERNAL_GTEST=ON \
+    ./
+  cmake --build "_build"
+
+  # Generate the Editions feature-set defaults consumed by the pure-Python
+  # runtime (google/protobuf/internal/python_edition_defaults.py). Upstream
+  # produces this via Bazel (compile_edition_defaults + embed_edition_defaults);
+  # the CMake/wheel path never runs those rules, so the file is otherwise
+  # missing from the wheel and descriptor_pool import fails under Editions.
+  # Replicate both steps with the freshly built protoc.
+  local _internal="python/google/protobuf/internal"
+  local _min _max
+  _min=$(grep -oP 'minimum_edition\s*=\s*"\K[^"]+' python/build_targets.bzl | head -n1)
+  _max=$(grep -oP 'maximum_edition\s*=\s*"\K[^"]+' python/build_targets.bzl | head -n1)
+  LD_LIBRARY_PATH="$PWD/_build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  "$PWD/_build/protoc" \
+    --edition_defaults_out="$PWD/_build/python_edition_defaults.binpb" \
+    --edition_defaults_minimum="${_min:-PROTO2}" \
+    --edition_defaults_maximum="${_max:-2024}" \
+    --proto_path=src \
+    src/google/protobuf/descriptor.proto
+  python - "$PWD/_build/python_edition_defaults.binpb" \
+           "$_internal/python_edition_defaults.py.template" \
+           "$_internal/python_edition_defaults.py" <<'PYEOF'
+import sys
+binpb, template, out = sys.argv[1:4]
+data = open(binpb, "rb").read()
+# Full octal escaping is a valid, unambiguous subset of absl::CEscape's output
+# and round-trips byte-exact inside the template's b"..." literal.
+esc = "".join("\\%03o" % b for b in data)
+tpl = open(template, encoding="utf-8").read()
+open(out, "w", encoding="utf-8").write(tpl.replace("DEFAULTS_VALUE", esc))
+PYEOF
+
+  # Generate the *_pb2.py / *_pb2.pyi descriptor modules for the pure-Python
+  # runtime. dist/setup.py packages whatever .py files already exist but never
+  # invokes protoc, so a raw git checkout otherwise ships ZERO generated
+  # descriptors (descriptor_pb2.py and every well-known type are missing).
+  # Upstream produces these via Bazel (//python:well_known_types_py_pb2 over
+  # //python:copied_wkt_proto_files); replicate that exact set with the freshly
+  # built protoc.
+  local _pb2_protos=(
+    google/protobuf/any.proto
+    google/protobuf/api.proto
+    google/protobuf/duration.proto
+    google/protobuf/empty.proto
+    google/protobuf/field_mask.proto
+    google/protobuf/source_context.proto
+    google/protobuf/struct.proto
+    google/protobuf/timestamp.proto
+    google/protobuf/type.proto
+    google/protobuf/wrappers.proto
+    google/protobuf/descriptor.proto
+    google/protobuf/compiler/plugin.proto
+    google/protobuf/json_options.proto
+    google/protobuf/json_enumvalue_options.proto
+  )
+  LD_LIBRARY_PATH="$PWD/_build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  "$PWD/_build/protoc" \
+    --proto_path=src \
+    --python_out=python \
+    --pyi_out=python \
+    "${_pb2_protos[@]/#/src/}"
+
+  # Stage the sdist layout python/dist/setup.py expects (mirrors Bazel
+  # //python/dist:source_tarball). Its globs (python/**/*.c, upb/**/*.c,
+  # utf8_range/*.c, google/protobuf/*.c) match nothing in a raw checkout, which
+  # silently yields an EMPTY google._upb._message extension and forces the slow
+  # pure-Python runtime. Source sets follow the upb/*/BUILD source_files groups.
+  local _dist="$srcdir/python-dist"
+  rm -rf "$_dist"
+  mkdir -p "$_dist/python" "$_dist/upb" "$_dist/utf8_range"
+  install -m644 python/dist/setup.py python/dist/MANIFEST.in LICENSE "$_dist/"
+  cp -a python/google "$_dist/"
+  # Same exclusions as Bazel :python_src_files; tests are not part of the wheel.
+  rm -f "$_dist"/google/protobuf/internal/*_test.py \
+    "$_dist/google/protobuf/internal/test_util.py" \
+    "$_dist/google/protobuf/internal/import_test_package/__init__.py"
+  (cd python && cp --parents ./*.[ch] free_threading/*.[ch] "$_dist/python/")
+  (cd upb && find . -name '*.h' -not -path './reflection/stage0/*' \
+     -exec cp --parents -t "$_dist/upb/" {} +)
+  (cd upb && find base hash lex mem message mini_descriptor mini_table port \
+     reflection text wire \( -name '*.c' -o -name '*.hpp' -o -name '*.inc' \) \
+     -not -path 'reflection/stage0/*' -not -path 'reflection/cmake/*' \
+     -exec cp --parents -t "$_dist/upb/" {} +)
+  (cd upb && cp --parents util/def_to_proto.c util/required_fields.c "$_dist/upb/")
+  install -m644 third_party/utf8_range/utf8_range.{c,h} \
+    third_party/utf8_range/utf8_range_{neon,sse}.inc -t "$_dist/utf8_range"
+
+  # upb bootstrap descriptors (Bazel :generated_bootstrap), from the fresh plugins.
+  LD_LIBRARY_PATH="$PWD/_build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  "$PWD/_build/protoc" \
+    --proto_path=src \
+    --plugin=protoc-gen-upb="$PWD/_build/protoc-gen-upb" \
+    --plugin=protoc-gen-upb_minitable="$PWD/_build/protoc-gen-upb_minitable" \
+    --plugin=protoc-gen-upbdefs="$PWD/_build/protoc-gen-upbdefs" \
+    --upb_out="$_dist" \
+    --upb_minitable_out="$_dist" \
+    --upbdefs_out="$_dist" \
+    src/google/protobuf/descriptor.proto \
+    src/google/protobuf/json_enumvalue_options.proto
+
+  # Compile the ~100 extension sources in parallel (setuptools build_ext).
+  printf '[build_ext]\nparallel = %s\n' "$(nproc)" > "$_dist/setup.cfg"
+
+  cd "$_dist"
+  CFLAGS="$CFLAGS -fmacro-prefix-map=$_dist/=" \
+  python \
+    -m build \
+    --wheel \
+    --no-isolation
+}
+
+check() {
+  cd "protobuf"
+
+  #make -C "_build" check
+
+  #cd "python"
+  #python "setup.py" test
+}
+
+package_protobuf-git() {
+  # NOTE: abseil-cpp bumps its library soname on every release and exposes no
+  # versioned `provides`, so pacman cannot enforce ABI coupling via
+  # a version pin. Whenever abseil-cpp(-git) is upgraded, protoc/libprotobuf will
+  # reference a vanished soname (e.g. libabsl_log_initialize.so.2508.0.0 -> not
+  # found) until protobuf-git is rebuilt. Rebuild this package after every abseil
+  # update (or rebuild against a compat shim).
+  depends=('glibc' 'libgcc' 'libstdc++' 'abseil-cpp' 'zlib')
+  provides=("protobuf=$pkgver" 'libprotoc.so' 'libprotobuf.so' 'libprotobuf-lite.so')
+  conflicts=('protobuf')
+
+  cd "protobuf"
+
+  DESTDIR="$pkgdir" cmake --install "_build"
+  install -Dm644 "LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 "editors/protobuf-mode.el" -t "$pkgdir/usr/share/emacs/site-lisp"
+  install -Dm644 "editors/proto.vim" -t "$pkgdir/usr/share/vim/vimfiles/syntax"
+}
+
+package_python-protobuf-git() {
+  pkgdesc="Python 3 bindings for Google Protocol Buffers"
+  depends=("protobuf-git=$pkgver" 'python')
+  optdepends=('python-numpy: numpy.asarray() on repeated scalar fields')
+  provides=("python-protobuf=$pkgver")
+  conflicts=('python-protobuf')
+
+  cd "protobuf"
+
+  install -Dm644 "LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+
+  python \
+    -m installer \
+    --destdir="$pkgdir" \
+    "$srcdir/python-dist/dist/"*.whl
+}
