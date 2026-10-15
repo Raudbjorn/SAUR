@@ -1,0 +1,43 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Felix Golatofski <contact@xdfr.de>
+# Contributor: McLenin <mclenin at gooogles email>
+
+pkgname=purple-facebook-git
+_gitname=purple-facebook
+pkgver=0.9.6.r623.g2c8038a
+pkgrel=1
+pkgdesc='Facebook protocol plugin for libpurple'
+url='https://github.com/dequis/purple-facebook'
+arch=('x86_64')
+license=('GPL-2.0-or-later')
+depends=('libpurple' 'json-glib' 'glib2' 'zlib')
+makedepends=('git')
+provides=('purple-facebook')
+conflicts=('purple-facebook')
+source=("$_gitname::git+$url.git")
+sha512sums=('SKIP')
+
+pkgver() {
+  cd "$_gitname"
+  git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "$_gitname"
+  # autogen.sh exits 1 when NOCONFIGURE is set (trailing `test -z && ...`); call autoreconf directly
+  mkdir -p m4
+  autoreconf -fi
+}
+
+build() {
+  cd "$_gitname"
+  ./configure --prefix=/usr
+  # libtool reorders -Wl,--as-needed after the libraries; re-apply it for -shared links
+  sed -i -e 's/ -shared / -Wl,-O1,--as-needed\0/g' libtool
+  make
+}
+
+package() {
+  cd "$_gitname"
+  make DESTDIR="$pkgdir" install
+}
