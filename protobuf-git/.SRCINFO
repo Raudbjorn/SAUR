@@ -1,0 +1,39 @@
+pkgbase = protobuf-git
+	pkgdesc = Google's data interchange format
+	pkgver = 36.2.r920.g686bbc5ab8
+	pkgrel = 1
+	url = https://developers.google.com/protocol-buffers/
+	arch = x86_64
+	license = BSD-3-Clause
+	checkdepends = python-pytest
+	checkdepends = python-numpy
+	makedepends = git
+	makedepends = cmake
+	makedepends = ninja
+	makedepends = gtest
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	source = git+https://github.com/protocolbuffers/protobuf.git
+	sha256sums = SKIP
+
+pkgname = protobuf-git
+	depends = glibc
+	depends = libgcc
+	depends = libstdc++
+	depends = abseil-cpp
+	depends = zlib
+	provides = protobuf=36.2.r920.g686bbc5ab8
+	provides = libprotoc.so
+	provides = libprotobuf.so
+	provides = libprotobuf-lite.so
+	conflicts = protobuf
+
+pkgname = python-protobuf-git
+	pkgdesc = Python 3 bindings for Google Protocol Buffers
+	depends = protobuf-git=36.2.r920.g686bbc5ab8
+	depends = python
+	optdepends = python-numpy: numpy.asarray() on repeated scalar fields
+	provides = python-protobuf=36.2.r920.g686bbc5ab8
+	conflicts = python-protobuf
