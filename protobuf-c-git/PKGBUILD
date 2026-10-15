@@ -1,0 +1,70 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Chocobo1 <chocobo1 AT archlinux DOT net>
+
+pkgname=protobuf-c-git
+pkgver=1.5.2.r7.g6decaa6
+pkgrel=2
+pkgdesc="Protocol Buffers implementation in C"
+arch=('i686' 'x86_64')
+url="https://github.com/protobuf-c/protobuf-c"
+license=('BSD-2-Clause')
+depends=('glibc' 'libgcc' 'libstdc++' 'abseil-cpp' 'protobuf' 'libprotobuf.so' 'libprotoc.so')
+makedepends=('git')
+provides=("protobuf-c=$pkgver" 'libprotobuf-c.so')
+conflicts=('protobuf-c')
+options=('staticlibs')
+# 'next' is upstream's development branch; 'master' only moves on releases
+source=("git+https://github.com/protobuf-c/protobuf-c.git#branch=next"
+        # https://github.com/protobuf-c/protobuf-c/pull/797 (FieldDescriptor::label() removed in protobuf >= 34)
+        "protobuf-c-pr797-protobuf34-label.patch")
+sha256sums=('SKIP'
+            'bf70df90f83d18fa2d4f2415378aa64e27ddaa8d1334deab2fde0407035dae90')
+
+
+pkgver() {
+  cd "protobuf-c"
+
+  git describe --long --tags --abbrev=7 --match 'v[0-9]*' \
+    | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "protobuf-c"
+
+  local _patch
+  for _patch in "$srcdir"/*.patch; do
+    # skip patches upstream has already merged
+    if git apply --reverse --check "$_patch" 2>/dev/null; then
+      echo "Skipping already-applied ${_patch##*/}"
+    else
+      git apply "$_patch"
+    fi
+  done
+
+  ./autogen.sh
+}
+
+build() {
+  cd "protobuf-c"
+
+  # static archive is shipped, so keep fat LTO objects usable by non-LTO consumers
+  CFLAGS="$CFLAGS -ffat-lto-objects" \
+  CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+  ./configure \
+    --prefix="/usr" \
+    --disable-dependency-tracking
+  make
+}
+
+check() {
+  cd "protobuf-c"
+
+  make check
+}
+
+package() {
+  cd "protobuf-c"
+
+  make DESTDIR="$pkgdir" install
+  install -Dm644 "LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
