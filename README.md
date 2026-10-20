@@ -11,6 +11,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | --- | --- | --- |
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
+| [`onetbb-git`](onetbb-git/) | oneTBB from a pinned upstream `master` commit with the stateful-allocator `concurrent_queue` patch (PR #1520); replaces the repository `onetbb` | Buildable and installed; 3 queue test binaries pass, full suite not run, no clean-chroot build yet |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
 | [`python-docling-core`](python-docling-core/) | Docling data types and serialization; `tests/` rename and typer relaxation | Buildable |
@@ -42,6 +43,11 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Package recipe
 │   └── README.md            # Package-specific notes
+├── onetbb-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── *.patch              # Stateful-allocator queue patch, applied in prepare()
+│   ├── PKGBUILD             # Pinned-commit build; TCM off, pip isolated from live site-packages
+│   └── README.md            # Patch provenance, build choices, differences from onetbb
 ├── omp/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Fork release build; fixed source URL and extracted path

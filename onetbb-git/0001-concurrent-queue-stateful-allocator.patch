@@ -1,0 +1,220 @@
+diff --git a/include/oneapi/tbb/concurrent_queue.h b/include/oneapi/tbb/concurrent_queue.h
+index 072fe96..b1877e6 100644
+--- a/include/oneapi/tbb/concurrent_queue.h
++++ b/include/oneapi/tbb/concurrent_queue.h
+@@ -137,25 +137,27 @@ public:
+     }
+ 
+     concurrent_queue& operator=( const concurrent_queue& other ) {
+-        //TODO: implement support for std::allocator_traits::propagate_on_container_copy_assignment
+-        if (my_queue_representation != other.my_queue_representation) {
++        if (this != &other) {
+             clear();
+-            my_allocator = other.my_allocator;
++            tbb::detail::copy_assign_allocators(my_allocator, other.my_allocator);
+             my_queue_representation->assign(*other.my_queue_representation, my_allocator, copy_construct_item);
+         }
+         return *this;
+     }
+ 
+     concurrent_queue& operator=( concurrent_queue&& other ) {
+-        //TODO: implement support for std::allocator_traits::propagate_on_container_move_assignment
+-        if (my_queue_representation != other.my_queue_representation) {
++        if (this != &other) {
+             clear();
+-            if (my_allocator == other.my_allocator) {
++            if (queue_allocator_traits::propagate_on_container_move_assignment::value) {
++                tbb::detail::move_assign_allocators(my_allocator, other.my_allocator);
+                 internal_swap(other);
+             } else {
+-                my_queue_representation->assign(*other.my_queue_representation, other.my_allocator, move_construct_item);
+-                other.clear();
+-                my_allocator = std::move(other.my_allocator);
++                if (my_allocator == other.my_allocator) {
++                    internal_swap(other);
++                } else {
++                    my_queue_representation->assign(*other.my_queue_representation, my_allocator, move_construct_item);
++                    other.clear();
++                }
+             }
+         }
+         return *this;
+@@ -178,8 +180,7 @@ public:
+     }
+ 
+     void swap ( concurrent_queue& other ) {
+-        //TODO: implement support for std::allocator_traits::propagate_on_container_swap
+-        __TBB_ASSERT(my_allocator == other.my_allocator, "unequal allocators");
++        tbb::detail::swap_allocators(my_allocator, other.my_allocator);
+         internal_swap(other);
+     }
+ 
+@@ -236,6 +237,8 @@ public:
+ 
+ private:
+     void internal_swap(concurrent_queue& src) {
++        if (!queue_allocator_traits::propagate_on_container_swap::value)
++            __TBB_ASSERT(my_allocator == src.my_allocator, "Swapping with unequal allocators is not allowed");
+         using std::swap;
+         swap(my_queue_representation, src.my_queue_representation);
+     }
+@@ -253,15 +256,13 @@ private:
+     template <typename Container, typename Value, typename A>
+     friend class concurrent_queue_iterator;
+ 
+-    static void copy_construct_item(T* location, const void* src) {
+-        // TODO: use allocator_traits for copy construction
+-        new (location) value_type(*static_cast<const value_type*>(src));
+-        // queue_allocator_traits::construct(my_allocator, location, *static_cast<const T*>(src));
++
++    static void copy_construct_item(queue_allocator_type& allocator, T* location, const void* src) {
++        queue_allocator_traits::construct(allocator, location, *static_cast<const T*>(src));
+     }
+ 
+-    static void move_construct_item(T* location, const void* src) {
+-        // TODO: use allocator_traits for move construction
+-        new (location) value_type(std::move(*static_cast<value_type*>(const_cast<void*>(src))));
++    static void move_construct_item(queue_allocator_type& allocator, T* location, const void* src) {
++        queue_allocator_traits::construct(allocator, location, std::move(*static_cast<value_type*>(const_cast<void*>(src))));
+     }
+ 
+     queue_allocator_type my_allocator;
+@@ -417,10 +418,9 @@ public:
+     }
+ 
+     concurrent_bounded_queue& operator=( const concurrent_bounded_queue& other ) {
+-        //TODO: implement support for std::allocator_traits::propagate_on_container_copy_assignment
+-        if (my_queue_representation != other.my_queue_representation) {
++        if (this != &other) {
+             clear();
+-            my_allocator = other.my_allocator;
++            tbb::detail::copy_assign_allocators(my_allocator, other.my_allocator);
+             my_capacity = other.my_capacity;
+             my_queue_representation->assign(*other.my_queue_representation, my_allocator, copy_construct_item);
+         }
+@@ -428,16 +428,19 @@ public:
+     }
+ 
+     concurrent_bounded_queue& operator=( concurrent_bounded_queue&& other ) {
+-        //TODO: implement support for std::allocator_traits::propagate_on_container_move_assignment
+-        if (my_queue_representation != other.my_queue_representation) {
++        if (this != &other) {
+             clear();
+-            if (my_allocator == other.my_allocator) {
++            if (queue_allocator_traits::propagate_on_container_move_assignment::value) {
++                tbb::detail::move_assign_allocators(my_allocator, other.my_allocator);
+                 internal_swap(other);
+             } else {
+-                my_queue_representation->assign(*other.my_queue_representation, other.my_allocator, move_construct_item);
+-                other.clear();
+-                my_allocator = std::move(other.my_allocator);
+-                my_capacity = other.my_capacity;
++                if (my_allocator == other.my_allocator) {
++                    internal_swap(other);
++                } else {
++                    my_queue_representation->assign(*other.my_queue_representation, my_allocator, move_construct_item);
++                    other.clear();
++                    my_capacity = other.my_capacity;
++                }
+             }
+         }
+         return *this;
+@@ -460,8 +463,7 @@ public:
+     }
+ 
+     void swap ( concurrent_bounded_queue& other ) {
+-        //TODO: implement support for std::allocator_traits::propagate_on_container_swap
+-        __TBB_ASSERT(my_allocator == other.my_allocator, "unequal allocators");
++        tbb::detail::swap_allocators(my_allocator, other.my_allocator);
+         internal_swap(other);
+     }
+ 
+@@ -646,14 +648,12 @@ private:
+         r1::abort_bounded_queue_monitors(my_monitors);
+     }
+ 
+-    static void copy_construct_item(T* location, const void* src) {
+-        // TODO: use allocator_traits for copy construction
+-        new (location) value_type(*static_cast<const value_type*>(src));
++    static void copy_construct_item(queue_allocator_type& ator, T* location, const void* src) {
++        queue_allocator_traits::construct(ator, location, *static_cast<const T*>(src));
+     }
+ 
+-    static void move_construct_item(T* location, const void* src) {
+-        // TODO: use allocator_traits for move construction
+-        new (location) value_type(std::move(*static_cast<value_type*>(const_cast<void*>(src))));
++    static void move_construct_item(queue_allocator_type& ator, T* location, const void* src) {
++        queue_allocator_traits::construct(ator, location, std::move(*static_cast<value_type*>(const_cast<void*>(src))));
+     }
+ 
+     template <typename Container, typename Value, typename A>
+diff --git a/include/oneapi/tbb/detail/_allocator_traits.h b/include/oneapi/tbb/detail/_allocator_traits.h
+index 8c60e25..3734313 100644
+--- a/include/oneapi/tbb/detail/_allocator_traits.h
++++ b/include/oneapi/tbb/detail/_allocator_traits.h
+@@ -1,5 +1,5 @@
+ /*
+-    Copyright (c) 2005-2021 Intel Corporation
++    Copyright (c) 2005-2024 Intel Corporation
+ 
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+@@ -91,7 +91,14 @@ void swap_allocators_impl( Allocator& lhs, Allocator& rhs, /*pocs = */ std::true
+ }
+ 
+ template <typename Allocator>
+-void swap_allocators_impl( Allocator&, Allocator&, /*pocs = */ std::false_type ) {}
++void swap_allocators_impl( Allocator& lhs, Allocator& rhs, /*pocs = */ std::false_type ) {
++    // If the lhs and rhs are not equal, the behavior is undefined
++    if (!allocator_traits<Allocator>::is_always_equal::value) {
++        __TBB_ASSERT(lhs == rhs, "Swapping with unequal allocators is not allowed");
++    }
++    tbb::detail::suppress_unused_warning(lhs);
++    tbb::detail::suppress_unused_warning(rhs);
++}
+ 
+ // Swaps allocators only if propagate_on_container_swap is true
+ template <typename Allocator>
+diff --git a/include/oneapi/tbb/detail/_concurrent_queue_base.h b/include/oneapi/tbb/detail/_concurrent_queue_base.h
+index ee628e1..4baef94 100644
+--- a/include/oneapi/tbb/detail/_concurrent_queue_base.h
++++ b/include/oneapi/tbb/detail/_concurrent_queue_base.h
+@@ -1,5 +1,5 @@
+ /*
+-    Copyright (c) 2005-2022 Intel Corporation
++    Copyright (c) 2005-2024 Intel Corporation
+ 
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+@@ -103,7 +103,7 @@ protected:
+     using page_allocator_traits = tbb::detail::allocator_traits<page_allocator_type>;
+ 
+ public:
+-    using item_constructor_type = void (*)(value_type* location, const void* src);
++    using item_constructor_type = void (*)(queue_allocator_type&, value_type* location, const void* src);
+     micro_queue() = default;
+     micro_queue( const micro_queue& ) = delete;
+     micro_queue& operator=( const micro_queue& ) = delete;
+@@ -254,7 +254,7 @@ public:
+         new_page->mask.store(src_page->mask.load(std::memory_order_relaxed), std::memory_order_relaxed);
+         for (; begin_in_page!=end_in_page; ++begin_in_page, ++g_index) {
+             if (new_page->mask.load(std::memory_order_relaxed) & uintptr_t(1) << begin_in_page) {
+-                copy_item(*new_page, begin_in_page, *src_page, begin_in_page, construct_item);
++                copy_item(allocator, *new_page, begin_in_page, *src_page, begin_in_page, construct_item);
+             }
+         }
+         return new_page;
+@@ -324,11 +324,11 @@ private:
+         ~destroyer() {my_value.~T();}
+     }; // class destroyer
+ 
+-    void copy_item( padded_page& dst, size_type dindex, const padded_page& src, size_type sindex,
++    void copy_item( queue_allocator_type& allocator, padded_page& dst, size_type dindex, const padded_page& src, size_type sindex,
+         item_constructor_type construct_item )
+     {
+         auto& src_item = src[sindex];
+-        construct_item( &dst[dindex], static_cast<const void*>(&src_item) );
++        construct_item( allocator, &dst[dindex], static_cast<const void*>(&src_item) );
+     }
+ 
+     void assign_and_destroy_item( void* dst, padded_page& src, size_type index ) {

@@ -1,0 +1,87 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: Donald <d _at_ chaos-reins.com>
+# Contributor: Felix Yan <felixonmars@archlinux.org>
+# Contributor: Caleb Maclennan <caleb@alerque.com>
+# Contributor: Stéphane Gaudreault <stephane@archlinux.org>
+# Contributor: Thomas Dziedzic < gostrc at gmail >
+# Contributor: Denis Martinez <deuns.martinez AT gmail.com>
+# Contributor: Bogdan Burlacu <bogdan.burlacu AT pm.me>
+
+pkgname=onetbb-git
+_srcname=oneTBB
+pkgver=2023.2.0.r0.gaf14bb5
+pkgrel=1
+pkgdesc='High level abstract threading library (oneAPI Threading Building Blocks), with stateful-allocator support for concurrent queues'
+arch=('x86_64')
+url='https://github.com/uxlfoundation/oneTBB'
+license=('Apache-2.0')
+depends=('gcc-libs' 'hwloc' 'python')
+makedepends=('git' 'cmake' 'ninja' 'python' 'python-pip' 'python-setuptools' 'python-wheel' 'swig')
+# Same sonames as the repository onetbb package (libtbb.so.12), so dependents
+# such as opencv, vtk and openvino keep resolving 'onetbb' and 'tbb'.
+provides=("onetbb=$pkgver" "tbb=$pkgver" "intel-tbb=$pkgver" 'libtbb.so=12-64' 'libtbbmalloc.so=2-64')
+conflicts=('onetbb' 'tbb' 'intel-tbb')
+
+# The commit is pinned deliberately: the patch below is generated against this
+# exact tree (uxlfoundation/oneTBB master of 2026-10-16). Tracking a moving
+# master would eventually make it stop applying.
+_commit='af14bb56c64295a761732a658de904ebced6a22d'
+source=(
+  "$_srcname::git+$url.git#commit=$_commit"
+  '0001-concurrent-queue-stateful-allocator.patch'
+)
+sha256sums=('SKIP'
+            'd826e9111c943610bdc20b347296652571ca358c28552d43dee2349e65300b3f')
+
+pkgver() {
+  cd "$_srcname"
+  printf '%s.r%s.g%s' \
+    "$(sed -n 's/^#define TBB_VERSION_\(MAJOR\|MINOR\|PATCH\) \([0-9]*\)$/\2/p' include/oneapi/tbb/version.h | paste -sd.)" \
+    "$(git rev-list --count HEAD)" \
+    "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_srcname"
+  # YexuanXiao's concurrent_queue / concurrent_bounded_queue allocator
+  # propagation fix (uxlfoundation/oneTBB PR #1520, closed unmerged),
+  # rebased onto the pinned commit. Idempotent: skip when already applied.
+  if git apply --check -R ../0001-concurrent-queue-stateful-allocator.patch 2>/dev/null; then
+    return 0
+  fi
+  git apply --index ../0001-concurrent-queue-stateful-allocator.patch
+}
+
+build() {
+  cd "$_srcname"
+  # TCM_BUILD=OFF: upstream's Thread Composability Manager target is built with
+  # -Werror and its own -D_FORTIFY_SOURCE=2, which clashes with makepkg's =3.
+  # TBB_STRICT=OFF does not cover it. The repository onetbb package omits TCM too.
+  cmake -G Ninja -B build \
+    -D CMAKE_INSTALL_PREFIX=/usr \
+    -D CMAKE_BUILD_TYPE=Release \
+    -D TBB_STRICT=OFF \
+    -D TBB_TEST=OFF \
+    -D TCM_BUILD=OFF \
+    -D TBB4PY_BUILD=ON
+  # The python_build target runs 'pip install --prefix build'; without this pip
+  # first uninstalls any tbb already present in the live site-packages.
+  export PIP_IGNORE_INSTALLED=1
+  ninja -C build all python_build
+}
+
+# Rename to check() to enable. Needs -D TBB_TEST=ON above; the full suite is slow.
+_check() {
+  cd "$_srcname"
+  ninja -C build test
+}
+
+package() {
+  cd "$_srcname"
+  # cmake --install, not "ninja install": the latter re-runs the always-stale
+  # python_build target (pip) inside fakeroot.
+  DESTDIR="$pkgdir" cmake --install build
+  # pip records the build directory here; it is useless at install time.
+  rm -f "$pkgdir"/usr/lib/python*/site-packages/tbb-*.dist-info/direct_url.json
+  install -Dm644 LICENSE.txt -t "$pkgdir/usr/share/licenses/$pkgname"
+}
