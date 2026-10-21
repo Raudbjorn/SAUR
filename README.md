@@ -25,6 +25,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`python-tree-sitter-typescript`](python-tree-sitter-typescript/) | `tree_sitter_typescript` grammar module for code-aware chunking | Buildable |
 | [`python-tree-sitter025`](python-tree-sitter025/) | `python-tree-sitter` pinned to 0.25.x; 0.26.0 faults on large Solidity inputs | Remove once 0.26.1 or newer passes the reproducer |
 | [`trailmark-git`](trailmark-git/) | Trailmark source-graph parser at upstream `f7e19d3`, plus fork and downstream patches | Buildable with `python-tree-sitter025` and AUR dependencies |
+| [`trid`](trid/) | File-type identifier from binary signatures; argument quoting and HTTPS definition updates fixed | Buildable |
 
 ## Repository layout
 
@@ -89,11 +90,18 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Version-pinned binding, provides python-tree-sitter
 │   └── README.md            # Fault description and removal condition
-└── trailmark-git/
+├── trailmark-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── *.patch              # Fork + downstream patches, applied in prepare()
+│   ├── PKGBUILD             # Package recipe
+│   └── README.md            # Patch provenance and host-tuning caveats
+└── trid/
     ├── .SRCINFO             # Generated AUR metadata
-    ├── *.patch              # Fork + downstream patches, applied in prepare()
-    ├── PKGBUILD             # Package recipe
-    └── README.md            # Patch provenance and host-tuning caveats
+    ├── PKGBUILD             # HTTPS sources; prepare() switches definition updates to HTTPS
+    ├── README.md            # Fixes from the AUR recipe, StringZilla benchmark
+    ├── trid.install         # Post-install definitions-update hint
+    ├── trid.sh              # /usr/bin/trid wrapper
+    └── update-trid-defs.*   # Updater script, systemd service and weekly timer
 ```
 
 Upstream source checkouts used during package research are deliberately ignored. `makepkg` obtains its own source under the package's `src/` directory.
