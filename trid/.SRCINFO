@@ -1,0 +1,25 @@
+pkgbase = trid
+	pkgdesc = An utility designed to identify file types from their binary signatures
+	pkgver = 2.48
+	pkgrel = 3
+	url = https://mark0.net/soft-trid-e.html
+	install = trid.install
+	arch = any
+	license = AGPL-3.0-only OR LicenseRef-trid-commercial
+	depends = python
+	optdepends = python-stringzilla: Use the StringZilla library for faster searches
+	source = trid.sh
+	source = update-trid-defs.sh
+	source = update-trid-defs.service
+	source = update-trid-defs.timer
+	source = trid-2.48.zip::https://mark0.net/download/trid.zip
+	source = trid-2.48.zip.asc::https://mark0.net/download/trid.zip.asc
+	validpgpkeys = B98E7F89E0EDCA59116CCDCC8DFA06F20DB12205
+	b2sums = 2d4df720146c2f8906376acbe17af774b5a1212d671d511cb9c35a9cc9df6f54feb794e4fbfc5f34d790511369ae40720319dd7841af6701b4aeff8b04cf90cd
+	b2sums = bf7df1f534e9971837b33177f9bda608b4392ee07dc29d05513fa82b72bba404b6e34ef421be0b99e8c62bbc7f6d621db5d43a1d1688b96bd101535a66354b02
+	b2sums = e096bf47307f52cf786e64a0c74b037513df7dff29cf33c0c0230a6225d14d4ac217cabc28bfcdf38fd3003fced274cfc001c695d288901e219e15758046fa98
+	b2sums = ad09bd81ba2855ee9a729320ebf0a1528124cc998e6af3f9bfff9524a736d05c77808c7b300f53c9632d5d420bbe9c85cb6e0bee1d32c08df1bedd336e4a98a7
+	b2sums = 987e11ef15692ccbf064d6b3d309794a6ace2d587c80bb2fbfe0051ec85ec0dcad4c9f1a1a8a2bf8384e15ed4d9a19a2740fcbbf42456e16cecbf1811487ca3b
+	b2sums = SKIP
+
+pkgname = trid

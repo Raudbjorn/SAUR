@@ -22,6 +22,7 @@
 /python-tree-sitter-language-pack/tree-sitter-language-pack-*.tar.gz
 /python-tree-sitter-language-pack/parser-sources-*.tar.zst
 /python-tree-sitter025/tree-sitter-*.tar.gz
+/trid/trid-*.zip*
 *.log
 
 # Python build residue
