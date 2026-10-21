@@ -9,6 +9,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 
 | Package | Description | Status |
 | --- | --- | --- |
+| [`detect-it-easy-git`](detect-it-easy-git/) | Detect It Easy file-type identifier (`die`, `diec`, `diel`) built against Qt6 | Buildable; namcap reports only the inherited `/opt` layout and the `qt6-svg` plugin dependency |
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
@@ -33,6 +34,10 @@ SAUR/
 ├── docs/
 │   ├── packaging-guide.md   # Local packaging and review workflow
 │   └── template.PKGBUILD    # Starting point for a new recipe
+├── detect-it-easy-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Qt6-pinned VCS build; Ninja, MAKEFLAGS-driven jobs
+│   └── README.md            # Qt5/Qt6 dependency mismatch, upstream defects
 ├── docling/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # CLI recipe; typer/transformers/websockets relaxations
