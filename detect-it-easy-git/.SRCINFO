@@ -1,0 +1,24 @@
+pkgbase = detect-it-easy-git
+	pkgdesc = Detect It Easy (DIE) is a program for determining types of files
+	pkgver = 4.0.0.r21930.4260948
+	pkgrel = 1
+	url = https://horsicq.github.io
+	arch = x86_64
+	license = MIT
+	makedepends = cmake
+	makedepends = git
+	makedepends = ninja
+	makedepends = qt6-tools
+	depends = glibc
+	depends = hicolor-icon-theme
+	depends = libgcc
+	depends = libstdc++
+	depends = qt6-base
+	depends = qt6-declarative
+	depends = qt6-svg
+	provides = detect-it-easy
+	conflicts = detect-it-easy
+	source = git+https://github.com/horsicq/DIE-engine.git
+	sha512sums = SKIP
+
+pkgname = detect-it-easy-git
