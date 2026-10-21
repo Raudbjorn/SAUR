@@ -1,0 +1,60 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: repsac (AUR magika)
+
+pkgname=magika-git
+_pkgname=magika
+pkgver=1.1.0.r153.g7bf308b
+pkgrel=1
+pkgdesc='Fast and accurate AI powered file content types detection (VCS build of the Rust CLI)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/google/magika'
+license=('Apache-2.0')
+depends=('glibc' 'libgcc')
+makedepends=('cargo' 'git')
+# AUR python-magika also provides magika-cli and installs /usr/bin/magika.
+provides=("$_pkgname=$pkgver" 'magika-cli')
+conflicts=("$_pkgname" 'magika-cli')
+# Upstream main replaced the CLI's ONNX Runtime with the embedded tract runtime after cli/v1.1.0.
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  git describe --long --tags --abbrev=7 --match 'cli/v*' \
+    | sed 's/^cli\/v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "$_pkgname/rust/cli"
+
+  export CARGO_HOME="$srcdir/cargo-home"
+  # Upstream's lock is load-bearing: tract 0.23.9 removes APIs that magika-tract-runtime uses.
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname/rust/cli"
+
+  export CARGO_HOME="$srcdir/cargo-home"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  RUSTFLAGS+=" --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
+  # No --all-features: the only optional CLI feature is the internal _trace profiler.
+  cargo build --frozen --release
+}
+
+check() {
+  # Not `cargo test`: the CLI has no unit tests, and the test harness forces a full LTO relink.
+  # Upstream's test suites name each file's parent directory after its expected label.
+  cd "$_pkgname/tests_data"
+  "$srcdir/target/release/$_pkgname" --format='%p: %l' --recursive basic previous_missdetections \
+    | awk -F': ' '
+        { n = split($1, dir, "/"); if (dir[n - 1] != $2) { print "mislabelled: " $0; bad = 1 } }
+        END { if (NR == 0) { print "no files identified"; bad = 1 } exit bad }'
+}
+
+package() {
+  cd "$_pkgname"
+
+  install -Dm755 "$srcdir/target/release/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
