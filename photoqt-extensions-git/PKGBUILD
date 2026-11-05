@@ -30,7 +30,8 @@ pkgver() {
 build() {
   # Ninja ignores MAKEFLAGS; carry its -jN over so deliberate throttling is respected.
   local _jobs
-  _jobs=$(grep -oP '(?<=-j)\s*\d+' <<< "$MAKEFLAGS" | tr -d ' ')
+  # Accept -jN, -j N, --jobs=N and --jobs N; the last one wins, as in make.
+  _jobs=$(grep -oP '(?:^|\s)(?:-j\s*|--jobs(?:=|\s+))\K\d+' <<< "$MAKEFLAGS" | tail -n1)
   export CMAKE_BUILD_PARALLEL_LEVEL="${_jobs:-$(nproc)}"
 
   cmake -S "$_pkgname" -B build -G Ninja \

@@ -72,8 +72,15 @@ appear in the generated `build.ninja`. CMake's `Release` type adds `-O3 -DNDEBUG
 - **Upstream CMake warnings.** `FindOpenSlide.cmake` passes `OPENSLIDE` to
   `find_package_handle_standard_args` instead of `OpenSlide`, and policy
   `QTP0004` is set to `OLD`. Both only warn; detection works.
-- **Moving target.** `master` can break at any commit. The verified revision is
-  `7d35e6f`.
+- **Moving target.** `master` can break at any commit. This recipe was fully
+  built at `7d35e6f`. At `0e9888a` (`r18`) only an equivalent local build with
+  Chromecast disabled was built, because the packager's host no longer has
+  `python-pychromecast`. The recipe as committed was not rebuilt at that revision.
+- **Upstream `--browse` bug at `r18`.** Commit `69526694` declares the new option
+  as `{"b", "browse", desc, "folder"}` without the inner braces. Qt therefore
+  registers an option named `b` described as `browse`, `--browse` is undefined,
+  and every launch logs `QCommandLineParser: option not defined: "browse"`. The
+  new open-file-dialog-at-folder flag doesn't work until upstream fixes it.
 
 ## Build and install
 
