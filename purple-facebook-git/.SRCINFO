@@ -10,7 +10,7 @@ pkgbase = purple-facebook-git
 	depends = json-glib
 	depends = glib2
 	depends = zlib
-	provides = purple-facebook
+	provides = purple-facebook=0.9.6.r623.g2c8038a
 	conflicts = purple-facebook
 	source = purple-facebook::git+https://github.com/dequis/purple-facebook.git
 	sha512sums = SKIP
