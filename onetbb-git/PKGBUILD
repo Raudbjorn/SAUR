@@ -9,7 +9,7 @@
 
 pkgname=onetbb-git
 _srcname=oneTBB
-pkgver=2023.2.0.r0.gaf14bb5
+pkgver=2023.2.0.r1222.gaf14bb5
 pkgrel=1
 pkgdesc='High level abstract threading library (oneAPI Threading Building Blocks), with stateful-allocator support for concurrent queues'
 arch=('x86_64')
@@ -31,7 +31,7 @@ source=(
   '0001-concurrent-queue-stateful-allocator.patch'
 )
 sha256sums=('SKIP'
-            'd826e9111c943610bdc20b347296652571ca358c28552d43dee2349e65300b3f')
+            '1a6ba066c3b9cd3742ab2f3f074b6933ec1189e497d09d446e9be509e653b4fb')
 
 pkgver() {
   cd "$_srcname"

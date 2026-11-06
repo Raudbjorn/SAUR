@@ -6,6 +6,7 @@ Source-built [oneTBB](https://github.com/uxlfoundation/oneTBB) (oneAPI Threading
 
 - Upstream commit `af14bb5` (uxlfoundation/oneTBB `master`, 2026-10-16), reporting version 2023.2.0 and `libtbb.so.12.20`.
 - The commit is pinned because the patch is generated against that exact tree. Bump the pin and regenerate the patch together.
+- `pkgver` is `2023.2.0.r1222.gaf14bb5`: `r1222` is `git rev-list --count` at the pin, which is what `pkgver()` computes. On a bump, set `pkgver` to the new `pkgver()` output and regenerate `.SRCINFO` so the static version, the versioned `provides` and the built package agree.
 - The old `oneapi-src/onetbb` URL redirects; this recipe uses the current `uxlfoundation` URL.
 
 ## Patch: `0001-concurrent-queue-stateful-allocator.patch`
@@ -14,8 +15,9 @@ Port of YexuanXiao's [uxlfoundation/oneTBB#1520](https://github.com/uxlfoundatio
 
 Port notes:
 
+- One deliberate deviation from #1520: the PR also asserted equal allocators inside `concurrent_queue::internal_swap()`. That helper is shared with the move constructor and the propagating move assignment, where `propagate_on_container_swap` does not apply and a moved-from stateful allocator may legitimately compare unequal, so the assertion is dropped there. The public `swap()` is still checked by the patched `swap_allocators_impl(..., std::false_type)`.
 - Two of the three files apply unchanged. `concurrent_queue.h` needed a hand merge because upstream added `my_capacity = other.my_capacity;` to the bounded queue's assignment operators; both are kept.
-- Verified before packaging: `conformance_concurrent_queue`, `test_concurrent_queue` and `test_concurrent_queue_whitebox` pass, and a stateful-allocator check (propagation on and off, both queue types, under ASan/UBSan) fails on unpatched `master` and passes patched.
+- Verified before packaging (against the patch before the `internal_swap()` change above; that change was only compile-checked, not re-run): `conformance_concurrent_queue`, `test_concurrent_queue` and `test_concurrent_queue_whitebox` pass, and a stateful-allocator check (propagation on and off, both queue types, under ASan/UBSan) fails on unpatched `master` and passes patched.
 - The full upstream suite was **not** run, and `check()` is disabled.
 
 ## Build choices
