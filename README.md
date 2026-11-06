@@ -16,6 +16,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`imhex-git`](imhex-git/) | ImHex hex editor from upstream `master` with ImHex-Patterns; offline submodule sources | Buildable; smoke-tested; no clean-chroot build yet |
 | [`okteta-qt6-git`](okteta-qt6-git/) | KDE hex editor, Qt6/KF6 port branch replayed on current `master` | Buildable; upstream port lacks the Structures tool |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
+| [`onetbb-git`](onetbb-git/) | oneTBB from a pinned upstream `master` commit with the stateful-allocator `concurrent_queue` patch (PR #1520); replaces the repository `onetbb` | Buildable and installed; 3 queue test binaries pass, full suite not run, no clean-chroot build yet |
 | [`photoqt-extensions-git`](photoqt-extensions-git/) | Official PhotoQt extensions from upstream `master`; fixes the AUR recipe's dependency list | Buildable; namcap clean apart from the built-in `PhotoQt` QML module |
 | [`photoqt-git`](photoqt-git/) | PhotoQt image viewer from upstream `master`, with Ninja, resvg and OpenSlide | Buildable; launch-tested offscreen, no clean-chroot build yet |
 | [`protobuf-c-git`](protobuf-c-git/) | protobuf-c from upstream `next`, patched to build against current protobuf (PR #797) | Buildable; clean-chroot build and `check()` pass against `extra/protobuf` 36.1 |
@@ -74,6 +75,11 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Fork release build; fixed source URL and extracted path
 │   └── README.md            # Fork rationale, naming/conflicts, build() not yet run
+├── onetbb-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── *.patch              # Stateful-allocator queue patch, applied in prepare()
+│   ├── PKGBUILD             # Pinned-commit build; TCM off, pip isolated from live site-packages
+│   └── README.md            # Patch provenance, build choices, differences from onetbb
 ├── photoqt-extensions-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # VCS recipe; dependency fixes (qt6-charts, no exiv2)
