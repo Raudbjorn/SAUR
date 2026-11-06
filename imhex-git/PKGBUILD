@@ -1,0 +1,152 @@
+# Maintainer: Sveinbjörn Geirsson <sveinbjorn@massif.network>
+# Contributor: KokaKiwi <kokakiwi+aur@kokakiwi.net>
+# Contributor: George Rawlinson <george@rawlinson.net.nz>
+
+_pkgname=ImHex
+pkgname=imhex-git
+pkgver=1.38.1.r681.g34483cb905
+pkgrel=1
+pkgdesc='A Hex Editor for Reverse Engineers, Programmers and people that value their eye sight when working at 3 AM'
+url='https://imhex.werwolv.net'
+license=('GPL-2.0-or-later')
+arch=('x86_64')
+# GLFW, Capstone and the LLVM demangler are vendored, as upstream's own Arch CI does.
+# CLI11 too: PatternLanguage's cli/main.cpp only includes <CLI/App.hpp>, which with
+# Arch's CLI11 2.7 leaves CLI::Config::from_file undefined and builtin.hexplug unloadable
+depends=('mbedtls' 'curl' 'dbus' 'freetype2' 'file' 'hicolor-icon-theme'
+         'xdg-desktop-portal' 'fontconfig' 'fmt' 'yara' 'md4c'
+         'bzip2' 'libssh2' 'lz4' 'xz' 'zlib' 'zstd'
+         'libglvnd' 'libx11' 'libxrandr' 'libxinerama' 'libxcursor' 'libxi'
+         'wayland' 'libxkbcommon')
+makedepends=('git' 'cmake' 'ninja'
+             'librsvg' 'nlohmann-json' 'wayland-protocols'
+             'python' 'dotnet-sdk-10.0')
+optdepends=('dotnet-runtime-10.0: support for .NET scripts'
+            'python: helper scripts in /usr/share/imhex/scripts'
+            'python-yaml: ksy2pat.py Kaitai Struct converter')
+provides=("imhex=${pkgver%%.r*}" 'imhex-patterns')
+conflicts=('imhex' 'imhex-patterns-git')
+# Every (nested) submodule is a makepkg source so prepare() needs no network
+# and rebuilds reuse the SRCDEST mirrors. Directory names must stay unique:
+# prepare() maps each submodule URL to "$srcdir/<basename of the URL>".
+_submodules=(
+  'https://github.com/WerWolv/Disassembler.git'
+  'https://github.com/fmtlib/fmt.git'
+  'https://github.com/WerWolv/libwolv.git'
+  'https://github.com/josuttis/jthread.git'
+  'https://github.com/WerWolv/libromfs.git'
+  'https://github.com/WerWolv/PatternLanguage.git'
+  'https://github.com/CLIUtils/CLI11.git'
+  'https://github.com/rockdreamer/throwing_ptr.git'
+  'https://github.com/WerWolv/HashLibPlus.git'
+  'https://github.com/capstone-engine/capstone.git'
+  'https://github.com/Martinsos/edlib.git'
+  'https://github.com/WerWolv/glfw.git'
+  'https://github.com/sammycage/lunasvg.git'
+  'https://github.com/mity/md4c.git'
+  'https://github.com/btzy/nativefiledialog-extended.git'
+  'https://gitlab.freedesktop.org/wayland/wayland-protocols.git'
+  'https://github.com/WerWolv/xdgpp.git'
+  'https://github.com/VirusTotal/yara.git'
+)
+source=("git+https://github.com/WerWolv/ImHex.git"
+        "git+https://github.com/WerWolv/ImHex-Patterns.git"
+        "${_submodules[@]/#/git+}")
+sha256sums=("${source[@]/*/SKIP}")
+
+pkgver() {
+  cd "$_pkgname"
+  local _tag
+  _tag=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)
+  printf '%s.r%s.g%s' "${_tag#v}" "$(git rev-list --count "$_tag"..HEAD)" "$(git rev-parse --short=10 HEAD)"
+}
+
+# Point each submodule of $1 at the local source of the same name, check out
+# the commit upstream pins, then descend (libwolv and fmt are nested twice)
+_init_submodules() {
+  local _repo=$1 _key _name _path _url
+  git -C "$_repo" submodule init
+  while read -r _key _path; do
+    _name=${_key#submodule.}
+    _name=${_name%.path}
+    _url=$(git -C "$_repo" config -f .gitmodules "submodule.$_name.url")
+    _url=${_url%.git}
+    git -C "$_repo" config "submodule.$_name.url" "$srcdir/${_url##*/}"
+  done < <(git -C "$_repo" config -f .gitmodules --get-regexp '\.path$')
+  git -C "$_repo" -c protocol.file.allow=always submodule update
+
+  while read -r _key _path; do
+    if [[ -f $_repo/$_path/.gitmodules ]]; then
+      _init_submodules "$_repo/$_path"
+    fi
+  done < <(git -C "$_repo" config -f .gitmodules --get-regexp '\.path$')
+}
+
+prepare() {
+  _init_submodules "$srcdir/$_pkgname"
+}
+
+build() {
+  # makepkg's ccache PATH shim and an inherited CMAKE_*_COMPILER_LAUNCHER
+  # (e.g. sccache) would otherwise wrap each other; keep only the launcher
+  if [[ -n ${CMAKE_CXX_COMPILER_LAUNCHER-} ]]; then
+    PATH=${PATH//\/usr\/lib\/ccache\/bin:/}
+  fi
+
+  # Keep build paths (__FILE__, assert messages) out of the binaries
+  CFLAGS+=" -ffile-prefix-map=$srcdir=/usr/src/debug/$pkgname"
+  CXXFLAGS+=" -ffile-prefix-map=$srcdir=/usr/src/debug/$pkgname"
+  # Same for the C# AssemblyLoader (MSBuild reads env vars as properties)
+  export PathMap="$srcdir=/usr/src/debug/$pkgname"
+  export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+
+  # Ninja ignores MAKEFLAGS, so carry its -jN across (falls back to all cores)
+  local _jobs
+  _jobs=$(grep -oP -- '-j\s*\K[0-9]+' <<< "$MAKEFLAGS" || nproc)
+
+  # gcc-ar/gcc-ranlib keep the static internal libs (libpl, libwolv, ...)
+  # readable when makepkg's LTO flags are active
+  cmake -B build -S "$_pkgname" -G Ninja \
+    -Wno-dev \
+    -D CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -D CMAKE_BUILD_TYPE=Release \
+    -D CMAKE_INSTALL_PREFIX=/usr \
+    -D CMAKE_SKIP_RPATH=ON \
+    -D CMAKE_AR=/usr/bin/gcc-ar \
+    -D CMAKE_RANLIB=/usr/bin/gcc-ranlib \
+    -D IMHEX_OFFLINE_BUILD=ON \
+    -D IMHEX_IGNORE_BAD_CLONE=ON \
+    -D IMHEX_STRIP_RELEASE=OFF \
+    -D IMHEX_STRICT_WARNINGS=OFF \
+    -D IMHEX_BUNDLE_DOTNET=OFF \
+    -D IMHEX_ENABLE_UPDATER=OFF \
+    -D USE_SYSTEM_LLVM=OFF \
+    -D USE_SYSTEM_CAPSTONE=OFF \
+    -D USE_SYSTEM_YARA=ON \
+    -D USE_SYSTEM_FMT=ON \
+    -D USE_SYSTEM_NLOHMANN_JSON=ON \
+    -D USE_SYSTEM_MD4C=ON \
+    -D USE_SYSTEM_CLI11=OFF
+
+  cmake --build build --parallel "$_jobs"
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+
+  # Patterns
+  install -dm0755 "$pkgdir/usr/share/imhex"
+  cp -r -t "$pkgdir/usr/share/imhex" \
+    "$srcdir/ImHex-Patterns"/{constants,encodings,includes,magic,nodes,patterns,plugins,scripts,themes,tips,yara}
+
+  # Desktop file(s)
+  install -Dm0644 "$_pkgname/resources/icon.svg" "$pkgdir/usr/share/pixmaps/imhex.svg"
+
+  # Documentation
+  install -Dm0644 -t "$pkgdir/usr/share/doc/imhex" \
+    "$_pkgname/README.md"
+
+  # Don't let BUILDDIR's default ACL / setgid dirs leak into installed modes
+  chmod -R go-w "$pkgdir"
+  find "$pkgdir" -type d -perm -2000 -exec chmod g-s {} +
+}
