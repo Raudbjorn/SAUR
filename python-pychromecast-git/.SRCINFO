@@ -1,0 +1,23 @@
+pkgbase = python-pychromecast-git
+	pkgdesc = Library for Python to communicate with the Google Chromecast
+	pkgver = 14.0.10.r86.g9527bc4
+	pkgrel = 1
+	url = https://github.com/home-assistant-libs/pychromecast
+	arch = any
+	license = MIT
+	checkdepends = python-pytest
+	makedepends = git
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	depends = python
+	depends = python-casttube
+	depends = python-protobuf
+	depends = python-requests
+	depends = python-zeroconf
+	provides = python-pychromecast
+	conflicts = python-pychromecast
+	source = pychromecast::git+https://github.com/home-assistant-libs/pychromecast.git
+	sha256sums = SKIP
+
+pkgname = python-pychromecast-git

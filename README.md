@@ -9,18 +9,24 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 
 | Package | Description | Status |
 | --- | --- | --- |
+| [`caprine-electron44`](caprine-electron44/) | Caprine (Facebook Messenger) on the system Electron 44 runtime; ~25 MB less installed payload than AUR `caprine` | Buildable; smoke-tested to the login page, logged-in features untested |
 | [`detect-it-easy-git`](detect-it-easy-git/) | Detect It Easy file-type identifier (`die`, `diec`, `diel`) built against Qt6 | Buildable; namcap reports only the inherited `/opt` layout and the `qt6-svg` plugin dependency |
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
 | [`imhex-git`](imhex-git/) | ImHex hex editor from upstream `master` with ImHex-Patterns; offline submodule sources | Buildable; smoke-tested; no clean-chroot build yet |
+| [`okteta-qt6-git`](okteta-qt6-git/) | KDE hex editor, Qt6/KF6 port branch replayed on current `master` | Buildable; upstream port lacks the Structures tool |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
+| [`photoqt-extensions-git`](photoqt-extensions-git/) | Official PhotoQt extensions from upstream `master`; fixes the AUR recipe's dependency list | Buildable; namcap clean apart from the built-in `PhotoQt` QML module |
+| [`photoqt-git`](photoqt-git/) | PhotoQt image viewer from upstream `master`, with Ninja, resvg and OpenSlide | Buildable; launch-tested offscreen, no clean-chroot build yet |
 | [`protobuf-c-git`](protobuf-c-git/) | protobuf-c from upstream `next`, patched to build against current protobuf (PR #797) | Buildable; clean-chroot build and `check()` pass against `extra/protobuf` 36.1 |
 | [`protoc-gen-go-git`](protoc-gen-go-git/) | `protoc` Go code generator built from upstream `master` | Buildable; `GOAMD64=v4 makepkg` for a host-tuned binary |
+| [`purple-facebook-git`](purple-facebook-git/) | Facebook Messenger protocol plugin for libpurple 2, tracking upstream `master` | Buildable with AUR `libpurple` and `libgadu`; Facebook login untested |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
 | [`python-docling-core`](python-docling-core/) | Docling data types and serialization; `tests/` rename and typer relaxation | Buildable |
 | [`python-docling-ibm-models`](python-docling-ibm-models/) | TableFormer and layout models; 4.0.2 is the floor `docling` requires | Buildable |
 | [`python-docling-parse`](python-docling-parse/) | Programmatic-PDF extraction; the stack's only compiled package | Buildable |
 | [`python-installer`](python-installer/) | Temporary 1.0.1 bridge required to build AUR `python-rapidocr` | Remove after configured repositories ship 1.0.1 or newer |
+| [`python-pychromecast-git`](python-pychromecast-git/) | Chromecast client library from upstream `master`; satisfies PhotoQt's `python-pychromecast` dependency | Buildable; import smoke test only, no device tested |
 | [`python-semchunk`](python-semchunk/) | Semantic chunking for `docling-core`'s `chunking` extra | Buildable; 4.1.1 exceeds an advisory upstream cap, verified against fixtures |
 | [`python-tree-sitter-c`](python-tree-sitter-c/) | `tree_sitter_c` grammar module for code-aware chunking | Buildable |
 | [`python-tree-sitter-javascript`](python-tree-sitter-javascript/) | `tree_sitter_javascript` grammar module for code-aware chunking | Buildable |
@@ -28,6 +34,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`python-tree-sitter-python`](python-tree-sitter-python/) | `tree_sitter_python` grammar module for code-aware chunking | Buildable |
 | [`python-tree-sitter-typescript`](python-tree-sitter-typescript/) | `tree_sitter_typescript` grammar module for code-aware chunking | Buildable |
 | [`python-tree-sitter025`](python-tree-sitter025/) | `python-tree-sitter` pinned to 0.25.x; 0.26.0 faults on large Solidity inputs | Remove once 0.26.1 or newer passes the reproducer |
+| [`searxng-git`](searxng-git/) | SearXNG with a custom theme, BM25 reranking, and Anna's Archive made to actually return results | Builds, installs and runs; theme rebuild adds npm and nodejs to makedepends |
 | [`trailmark-git`](trailmark-git/) | Trailmark source-graph parser at upstream `f7e19d3`, plus fork and downstream patches | Buildable with `python-tree-sitter025` and AUR dependencies |
 | [`trid`](trid/) | File-type identifier from binary signatures; argument quoting and HTTPS definition updates fixed | Buildable |
 
@@ -38,6 +45,11 @@ SAUR/
 ├── docs/
 │   ├── packaging-guide.md   # Local packaging and review workflow
 │   └── template.PKGBUILD    # Starting point for a new recipe
+├── caprine-electron44/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── caprine.sh           # Launcher; @ELECTRON@ substituted in prepare()
+│   ├── PKGBUILD             # Electron 44, semver-range dependency refresh
+│   └── README.md            # Size reductions, floating deps, smoke test
 ├── detect-it-easy-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Qt6-pinned VCS build; Ninja, MAKEFLAGS-driven jobs
@@ -55,10 +67,22 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # master + 18 submodule sources, bundled CLI11, LTO
 │   └── README.md            # Deviations from Arch's imhex, CLI11 defect, Not claimed
+├── okteta-qt6-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Port commits cherry-picked onto master in prepare()
+│   └── README.md            # Port/master relationship, AUR deltas, upstream gaps
 ├── omp/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Fork release build; fixed source URL and extracted path
 │   └── README.md            # Fork rationale, naming/conflicts, build() not yet run
+├── photoqt-extensions-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; dependency fixes (qt6-charts, no exiv2)
+│   └── README.md            # Dependency evidence, signature-verification note
+├── photoqt-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; Ninja build, resvg + OpenSlide enabled
+│   └── README.md            # Differences from AUR photoqt, namcap false positives
 ├── protobuf-c-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── *.patch              # Pinned upstream PR #797, skipped once merged
@@ -68,6 +92,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # VCS build of master; MAKEFLAGS-driven go -p
 │   └── README.md            # Conflicts, GOAMD64 tuning, namcap false positives
+├── purple-facebook-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; vendored pidgin tree, no hg, autoreconf in prepare()
+│   └── README.md            # Changes from AUR recipe, AUR libpurple/libgadu chain, protoc-c pitfall
 ├── python-docling/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Library-only recipe, bytecode-level fix
@@ -91,6 +119,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Temporary repository-version bridge
 │   └── README.md            # Removal condition and build notes
+├── python-pychromecast-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; requests dependency, build-cap skip
+│   └── README.md            # Differences from extra and AUR, upstream deprecations
 ├── python-semchunk/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── package_test.py      # check() helper, referenced by source()
