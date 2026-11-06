@@ -32,6 +32,11 @@ dangle. This recipe installs the license from the source tree.
 - **`check()` added.** Upstream's suite is one import test (`tests/test_init.py`).
   Plugin autoload is disabled so unrelated system-wide pytest plugins don't load.
   On the packager's host that cut the run from 2.4 s to 0.13 s.
+- **`build/` and `dist/` cleared before building.** makepkg's git re-extract
+  keeps untracked files, so a rebuild without `--cleanbuild` after upstream
+  bumps its version would leave the old wheel in `dist/` next to the new one
+  and fail `installer` on overlapping files. A stale setuptools `build/lib`
+  could also put modules upstream has deleted back into the wheel.
 - **Bytecode levels explicit.** `--compile-bytecode 0 --compile-bytecode 1`,
   matching the other Python recipes here.
 
