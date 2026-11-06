@@ -49,6 +49,11 @@ build() {
   # dependabot and routinely lag the rolling repositories. wheel is unused since
   # setuptools 70.1 ships bdist_wheel. Skip the check so a setuptools update
   # does not break an otherwise unchanged build.
+  # makepkg's git re-extract keeps untracked files, and neither build nor
+  # setuptools cleans its output: without this, a rebuild without --cleanbuild
+  # hands package() the previous version's wheel too, and setuptools' build/lib
+  # can carry modules upstream has since deleted into the new wheel.
+  rm -rf -- build dist
   python -m build --wheel --no-isolation --skip-dependency-check
 }
 
