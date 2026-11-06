@@ -21,6 +21,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`photoqt-extensions-git`](photoqt-extensions-git/) | Official PhotoQt extensions from upstream `master`; fixes the AUR recipe's dependency list | Buildable; namcap clean apart from the built-in `PhotoQt` QML module |
 | [`photoqt-git`](photoqt-git/) | PhotoQt image viewer from upstream `master`, with Ninja, resvg and OpenSlide | Buildable; launch-tested offscreen, no clean-chroot build yet |
 | [`protobuf-c-git`](protobuf-c-git/) | protobuf-c from upstream `next`, patched to build against current protobuf (PR #797) | Buildable; clean-chroot build and `check()` pass against `extra/protobuf` 36.1 |
+| [`protoc-gen-go-git`](protoc-gen-go-git/) | `protoc` Go code generator built from upstream `master` | Buildable; `GOAMD64=v4 makepkg` for a host-tuned binary |
 | [`purple-facebook-git`](purple-facebook-git/) | Facebook Messenger protocol plugin for libpurple 2, tracking upstream `master` | Buildable with AUR `libpurple` and `libgadu`; Facebook login untested |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
 | [`python-docling-core`](python-docling-core/) | Docling data types and serialization; `tests/` rename and typer relaxation | Buildable |
@@ -98,6 +99,10 @@ SAUR/
 │   ├── *.patch              # Pinned upstream PR #797, skipped once merged
 │   ├── PKGBUILD             # `next` branch, soname deps, check() enabled
 │   └── README.md            # Why `next`, patch provenance, proto3 optional gap
+├── protoc-gen-go-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS build of master; MAKEFLAGS-driven go -p
+│   └── README.md            # Conflicts, GOAMD64 tuning, namcap false positives
 ├── purple-facebook-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # VCS recipe; vendored pidgin tree, no hg, autoreconf in prepare()
