@@ -1,0 +1,26 @@
+pkgbase = protobuf-c-git
+	pkgdesc = Protocol Buffers implementation in C
+	pkgver = 1.5.2.r7.g6decaa6
+	pkgrel = 2
+	url = https://github.com/protobuf-c/protobuf-c
+	arch = i686
+	arch = x86_64
+	license = BSD-2-Clause
+	makedepends = git
+	depends = glibc
+	depends = libgcc
+	depends = libstdc++
+	depends = abseil-cpp
+	depends = protobuf
+	depends = libprotobuf.so
+	depends = libprotoc.so
+	provides = protobuf-c=1.5.2.r7.g6decaa6
+	provides = libprotobuf-c.so
+	conflicts = protobuf-c
+	options = staticlibs
+	source = git+https://github.com/protobuf-c/protobuf-c.git#branch=next
+	source = protobuf-c-pr797-protobuf34-label.patch
+	sha256sums = SKIP
+	sha256sums = bf70df90f83d18fa2d4f2415378aa64e27ddaa8d1334deab2fde0407035dae90
+
+pkgname = protobuf-c-git
