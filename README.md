@@ -16,6 +16,8 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`imhex-git`](imhex-git/) | ImHex hex editor from upstream `master` with ImHex-Patterns; offline submodule sources | Buildable; smoke-tested; no clean-chroot build yet |
 | [`okteta-qt6-git`](okteta-qt6-git/) | KDE hex editor, Qt6/KF6 port branch replayed on current `master` | Buildable; upstream port lacks the Structures tool |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
+| [`photoqt-extensions-git`](photoqt-extensions-git/) | Official PhotoQt extensions from upstream `master`; fixes the AUR recipe's dependency list | Buildable; namcap clean apart from the built-in `PhotoQt` QML module |
+| [`photoqt-git`](photoqt-git/) | PhotoQt image viewer from upstream `master`, with Ninja, resvg and OpenSlide | Buildable; launch-tested offscreen, no clean-chroot build yet |
 | [`protobuf-c-git`](protobuf-c-git/) | protobuf-c from upstream `next`, patched to build against current protobuf (PR #797) | Buildable; clean-chroot build and `check()` pass against `extra/protobuf` 36.1 |
 | [`purple-facebook-git`](purple-facebook-git/) | Facebook Messenger protocol plugin for libpurple 2, tracking upstream `master` | Buildable with AUR `libpurple` and `libgadu`; Facebook login untested |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
@@ -72,6 +74,14 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Fork release build; fixed source URL and extracted path
 │   └── README.md            # Fork rationale, naming/conflicts, build() not yet run
+├── photoqt-extensions-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; dependency fixes (qt6-charts, no exiv2)
+│   └── README.md            # Dependency evidence, signature-verification note
+├── photoqt-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; Ninja build, resvg + OpenSlide enabled
+│   └── README.md            # Differences from AUR photoqt, namcap false positives
 ├── protobuf-c-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── *.patch              # Pinned upstream PR #797, skipped once merged
