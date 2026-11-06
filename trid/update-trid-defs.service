@@ -1,0 +1,12 @@
+[Unit]
+Description=trid defenitions database update
+RequiresMountsFor=/var/lib/trid
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/update-trid-defs
+
+[Install]
+WantedBy=multi-user.target
