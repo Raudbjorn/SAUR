@@ -47,8 +47,8 @@ systemd, with a custom theme and three carried patches.
 - Scraper engines fail silently. A 403 yields zero XPath matches, zero results
   and an empty `/stats/errors`; absence of an error is not evidence an engine
   works.
-- `prepare()` fails when the build host's python is not `_pyminor`. After an
-  Arch CPython bump, update `_pyminor` and rebuild.
+- After an Arch CPython minor bump, update `_pyminor` (and `.SRCINFO`) and
+  rebuild. Nothing checks that it matches the build host's python.
 - Do not hand-edit `.SRCINFO`; regenerate with `makepkg --printsrcinfo`.
 
 ## Licence
