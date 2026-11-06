@@ -18,6 +18,8 @@
 /*/pkg/
 *.pkg.tar.*
 *.src.tar.*
+/pyside2/pyside-setup-opensource-src-*.tar.xz
+/pyside2/pyside2_*.debian.tar.xz
 /python-installer/python-installer-*.tar.gz
 /python-tree-sitter-language-pack/tree-sitter-language-pack-*.tar.gz
 /python-tree-sitter-language-pack/parser-sources-*.tar.zst

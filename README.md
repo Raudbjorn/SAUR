@@ -20,6 +20,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`photoqt-git`](photoqt-git/) | PhotoQt image viewer from upstream `master`, with Ninja, resvg and OpenSlide | Buildable; launch-tested offscreen, no clean-chroot build yet |
 | [`protobuf-c-git`](protobuf-c-git/) | protobuf-c from upstream `next`, patched to build against current protobuf (PR #797) | Buildable; clean-chroot build and `check()` pass against `extra/protobuf` 36.1 |
 | [`purple-facebook-git`](purple-facebook-git/) | Facebook Messenger protocol plugin for libpurple 2, tracking upstream `master` | Buildable with AUR `libpurple` and `libgadu`; Facebook login untested |
+| [`pyside2`](pyside2/) | PySide2 5.15.19 (Qt 5 bindings) for Python 3.14; Debian patches from snapshot.debian.org, libclang 21 parser, Ninja | Builds, installs and imports all 43 modules; offscreen smoke test only, no clean-chroot build |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
 | [`python-docling-core`](python-docling-core/) | Docling data types and serialization; `tests/` rename and typer relaxation | Buildable |
 | [`python-docling-ibm-models`](python-docling-ibm-models/) | TableFormer and layout models; 4.0.2 is the floor `docling` requires | Buildable |
@@ -91,6 +92,11 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # VCS recipe; vendored pidgin tree, no hg, autoreconf in prepare()
 │   └── README.md            # Changes from AUR recipe, AUR libpurple/libgadu chain, protoc-c pitfall
+├── pyside2/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── *.patch              # Python 3.14, CMake pyi-ordering and two inherited AUR patches
+│   ├── PKGBUILD             # Split package; Debian snapshot patches, libclang 21, Ninja
+│   └── README.md            # Changes from AUR recipe, out-of-repo Qt5 deps, Not verified
 ├── python-docling/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Library-only recipe, bytecode-level fix

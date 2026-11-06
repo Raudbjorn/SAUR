@@ -1,0 +1,35 @@
+--- a/build_scripts/config.py	2026-11-06 17:00:28.275666397 +0000
++++ b/build_scripts/config.py	2026-11-06 17:00:28.317084541 +0000
+@@ -97,6 +97,7 @@
+             'Programming Language :: Python :: 3.11',
+             'Programming Language :: Python :: 3.12',
+             'Programming Language :: Python :: 3.13',
++            'Programming Language :: Python :: 3.14',
+         ]
+ 
+         self.setup_script_dir = None
+@@ -139,7 +140,7 @@
+         setup_kwargs['zip_safe'] = False
+         setup_kwargs['cmdclass'] = cmd_class_dict
+         setup_kwargs['version'] = package_version
+-        setup_kwargs['python_requires'] = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <3.14"
++        setup_kwargs['python_requires'] = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <3.15"
+ 
+         if quiet:
+             # Tells distutils / setuptools to be quiet, and only print warnings or errors.
+--- a/sources/shiboken2/shibokenmodule/files.dir/shibokensupport/signature/loader.py
++++ b/sources/shiboken2/shibokenmodule/files.dir/shibokensupport/signature/loader.py
+@@ -79,9 +79,12 @@
+     return getattr(x, "__qualname__", x.__name__)
+ 
+ # patching inspect's formatting to keep the word "typing":
+-def formatannotation(annotation, base_module=None):
++# Python 3.14 passes the keyword-only argument quote_annotation_strings.
++def formatannotation(annotation, base_module=None, *, quote_annotation_strings=True):
+     # if getattr(annotation, '__module__', None) == 'typing':
+     #     return repr(annotation).replace('typing.', '')
++    if not quote_annotation_strings and isinstance(annotation, str):
++        return annotation
+     if isinstance(annotation, type):
+         name = _qualname(annotation)
+         if annotation.__module__ in ('builtins', base_module):
