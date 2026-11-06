@@ -1,0 +1,18 @@
+pkgbase = caprine-electron44
+	pkgdesc = Elegant Facebook Messenger desktop app, packaged for the system Electron 44 runtime
+	pkgver = 2.61.0
+	pkgrel = 1
+	url = https://github.com/sindresorhus/caprine
+	arch = any
+	license = MIT
+	makedepends = npm
+	depends = bash
+	depends = electron44
+	provides = caprine=2.61.0
+	conflicts = caprine
+	source = caprine-2.61.0.tar.gz::https://github.com/sindresorhus/caprine/archive/v2.61.0.tar.gz
+	source = caprine.sh
+	sha256sums = 4ac222309a86afde59866dc15f59065fec2f30372d9311acb8fe5a6660beaff8
+	sha256sums = 70679c9959bae776d667ae1dbd4ffca9298d8784ad4a5959f3b35d2493f2c131
+
+pkgname = caprine-electron44
