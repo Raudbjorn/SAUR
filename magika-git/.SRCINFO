@@ -1,0 +1,20 @@
+pkgbase = magika-git
+	pkgdesc = Fast and accurate AI powered file content types detection (VCS build of the Rust CLI)
+	pkgver = 1.1.0.r153.g7bf308b
+	pkgrel = 1
+	url = https://github.com/google/magika
+	arch = x86_64
+	arch = aarch64
+	license = Apache-2.0
+	makedepends = cargo
+	makedepends = git
+	depends = glibc
+	depends = libgcc
+	provides = magika=1.1.0.r153.g7bf308b
+	provides = magika-cli
+	conflicts = magika
+	conflicts = magika-cli
+	source = magika::git+https://github.com/google/magika.git
+	sha256sums = SKIP
+
+pkgname = magika-git

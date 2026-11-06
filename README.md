@@ -14,6 +14,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
 | [`imhex-git`](imhex-git/) | ImHex hex editor from upstream `master` with ImHex-Patterns; offline submodule sources | Buildable; smoke-tested; no clean-chroot build yet |
+| [`magika-git`](magika-git/) | VCS build of Google's Magika CLI on the embedded tract runtime; upstream's locked crate graph is required | Buildable; CUDA path not exercised |
 | [`okteta-qt6-git`](okteta-qt6-git/) | KDE hex editor, Qt6/KF6 port branch replayed on current `master` | Buildable; upstream port lacks the Structures tool |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
 | [`onetbb-git`](onetbb-git/) | oneTBB from a pinned upstream `master` commit with the stateful-allocator `concurrent_queue` patch (PR #1520); replaces the repository `onetbb` | Buildable and installed; 3 queue test binaries pass, full suite not run, no clean-chroot build yet |
@@ -67,6 +68,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # master + 18 submodule sources, bundled CLI11, LTO
 │   └── README.md            # Deviations from Arch's imhex, CLI11 defect, Not claimed
+├── magika-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Rust CLI from upstream main; locked graph, label-suite check()
+│   └── README.md            # Name collisions, tract lock pin, host-tuning measurements
 ├── okteta-qt6-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Port commits cherry-picked onto master in prepare()
