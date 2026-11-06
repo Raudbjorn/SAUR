@@ -1,0 +1,64 @@
+# Maintainer: Sveinbjörn Geirsson <raudbjorn@gmail.com>
+# Contributor: Mahdi Sarikhani <mahdisarikhani@outlook.com>
+# Contributor: Frederik Schwan <freswa at archlinux dot org>
+# Contributor: Nicola Squartini <tensor5@gmail.com>
+
+pkgname=caprine-electron44
+_pkgname=caprine
+pkgver=2.61.0
+pkgrel=1
+_electron=electron44
+pkgdesc='Elegant Facebook Messenger desktop app, packaged for the system Electron 44 runtime'
+arch=('any')
+url='https://github.com/sindresorhus/caprine'
+license=('MIT')
+provides=("${_pkgname}=${pkgver}")
+conflicts=("${_pkgname}")
+# Refresh npm dependencies to the newest versions allowed by package.json's
+# semver ranges instead of the versions pinned in upstream's package-lock.json.
+# Set to 0 for a lockfile-exact build.
+_update_deps=1
+depends=('bash' "${_electron}")
+makedepends=('npm')
+source=("${_pkgname}-${pkgver}.tar.gz::${url}/archive/v${pkgver}.tar.gz"
+        "${_pkgname}.sh")
+sha256sums=('4ac222309a86afde59866dc15f59065fec2f30372d9311acb8fe5a6660beaff8'
+            '70679c9959bae776d667ae1dbd4ffca9298d8784ad4a5959f3b35d2493f2c131')
+
+prepare() {
+    cd "${_pkgname}-${pkgver}"
+    export npm_config_cache="${srcdir}/npm-cache"
+    export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+
+    # Unused at runtime, but drags pacote/sigstore/node-gyp/cacache into app.asar
+    npm pkg delete dependencies.npm-check-updates
+
+    if (( _update_deps )); then
+        rm -f package-lock.json
+    fi
+    npm install --no-audit --no-fund --maxsockets=48
+
+    sed -i "s/@ELECTRON@/${_electron}/" "${srcdir}/${_pkgname}.sh"
+}
+
+build() {
+    cd "${_pkgname}-${pkgver}"
+    export npm_config_cache="${srcdir}/npm-cache"
+    npm run build
+    npx electron-builder --linux --dir \
+        -c.npmRebuild=false \
+        -c.electronDist="/usr/lib/${_electron}" \
+        -c.electronVersion="$(cat /usr/lib/${_electron}/version)"
+}
+
+package() {
+    cd "${_pkgname}-${pkgver}"
+    install -Dm644 dist/linux-unpacked/resources/app.asar -t "${pkgdir}/usr/lib/${_pkgname}"
+    cp -r dist/linux-unpacked/resources/app.asar.unpacked "${pkgdir}/usr/lib/${_pkgname}"
+    # macOS-only Mach-O helper; only spawned behind is.macos
+    rm "${pkgdir}/usr/lib/${_pkgname}/app.asar.unpacked/node_modules/@sindresorhus/do-not-disturb/do-not-disturb"
+    install -Dm755 "${srcdir}/${_pkgname}.sh" "${pkgdir}/usr/bin/${_pkgname}"
+    install -Dm644 build/icon.png "${pkgdir}/usr/share/pixmaps/${_pkgname}.png"
+    install -Dm644 "packages/rpm/${_pkgname}.desktop" -t "${pkgdir}/usr/share/applications"
+    install -Dm644 license -t "${pkgdir}/usr/share/licenses/${pkgname}"
+}

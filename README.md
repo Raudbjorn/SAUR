@@ -9,13 +9,18 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 
 | Package | Description | Status |
 | --- | --- | --- |
+| [`caprine-electron44`](caprine-electron44/) | Caprine (Facebook Messenger) on the system Electron 44 runtime; ~25 MB less installed payload than AUR `caprine` | Buildable; smoke-tested to the login page, logged-in features untested |
 | [`detect-it-easy-git`](detect-it-easy-git/) | Detect It Easy file-type identifier (`die`, `diec`, `diel`) built against Qt6 | Buildable; namcap reports only the inherited `/opt` layout and the `qt6-svg` plugin dependency |
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
 | [`imhex-git`](imhex-git/) | ImHex hex editor from upstream `master` with ImHex-Patterns; offline submodule sources | Buildable; smoke-tested; no clean-chroot build yet |
+| [`okteta-qt6-git`](okteta-qt6-git/) | KDE hex editor, Qt6/KF6 port branch replayed on current `master` | Buildable; upstream port lacks the Structures tool |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
 | [`onetbb-git`](onetbb-git/) | oneTBB from a pinned upstream `master` commit with the stateful-allocator `concurrent_queue` patch (PR #1520); replaces the repository `onetbb` | Buildable and installed; 3 queue test binaries pass, full suite not run, no clean-chroot build yet |
+| [`photoqt-extensions-git`](photoqt-extensions-git/) | Official PhotoQt extensions from upstream `master`; fixes the AUR recipe's dependency list | Buildable; namcap clean apart from the built-in `PhotoQt` QML module |
+| [`photoqt-git`](photoqt-git/) | PhotoQt image viewer from upstream `master`, with Ninja, resvg and OpenSlide | Buildable; launch-tested offscreen, no clean-chroot build yet |
 | [`protobuf-c-git`](protobuf-c-git/) | protobuf-c from upstream `next`, patched to build against current protobuf (PR #797) | Buildable; clean-chroot build and `check()` pass against `extra/protobuf` 36.1 |
+| [`purple-facebook-git`](purple-facebook-git/) | Facebook Messenger protocol plugin for libpurple 2, tracking upstream `master` | Buildable with AUR `libpurple` and `libgadu`; Facebook login untested |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
 | [`python-docling-core`](python-docling-core/) | Docling data types and serialization; `tests/` rename and typer relaxation | Buildable |
 | [`python-docling-ibm-models`](python-docling-ibm-models/) | TableFormer and layout models; 4.0.2 is the floor `docling` requires | Buildable |
@@ -40,6 +45,11 @@ SAUR/
 ├── docs/
 │   ├── packaging-guide.md   # Local packaging and review workflow
 │   └── template.PKGBUILD    # Starting point for a new recipe
+├── caprine-electron44/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── caprine.sh           # Launcher; @ELECTRON@ substituted in prepare()
+│   ├── PKGBUILD             # Electron 44, semver-range dependency refresh
+│   └── README.md            # Size reductions, floating deps, smoke test
 ├── detect-it-easy-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Qt6-pinned VCS build; Ninja, MAKEFLAGS-driven jobs
@@ -57,6 +67,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # master + 18 submodule sources, bundled CLI11, LTO
 │   └── README.md            # Deviations from Arch's imhex, CLI11 defect, Not claimed
+├── okteta-qt6-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # Port commits cherry-picked onto master in prepare()
+│   └── README.md            # Port/master relationship, AUR deltas, upstream gaps
 ├── omp/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Fork release build; fixed source URL and extracted path
@@ -66,11 +80,23 @@ SAUR/
 │   ├── *.patch              # Stateful-allocator queue patch, applied in prepare()
 │   ├── PKGBUILD             # Pinned-commit build; TCM off, pip isolated from live site-packages
 │   └── README.md            # Patch provenance, build choices, differences from onetbb
+├── photoqt-extensions-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; dependency fixes (qt6-charts, no exiv2)
+│   └── README.md            # Dependency evidence, signature-verification note
+├── photoqt-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; Ninja build, resvg + OpenSlide enabled
+│   └── README.md            # Differences from AUR photoqt, namcap false positives
 ├── protobuf-c-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── *.patch              # Pinned upstream PR #797, skipped once merged
 │   ├── PKGBUILD             # `next` branch, soname deps, check() enabled
 │   └── README.md            # Why `next`, patch provenance, proto3 optional gap
+├── purple-facebook-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; vendored pidgin tree, no hg, autoreconf in prepare()
+│   └── README.md            # Changes from AUR recipe, AUR libpurple/libgadu chain, protoc-c pitfall
 ├── python-docling/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Library-only recipe, bytecode-level fix
