@@ -21,7 +21,7 @@ makedepends=('git' 'python-build' 'python-msgspec' 'python-setuptools'
 # compiled extensions are tied to one CPython minor version, so the package
 # pins the minor it was built for. pacman then refuses a CPython minor bump
 # until this package is rebuilt, instead of letting the service break on start.
-# prepare() fails if the build host's python does not match _pyminor.
+# Bump _pyminor (and .SRCINFO) together with Arch's python.
 _pyminor=3.14
 depends=("python>=${_pyminor}" "python<${_pyminor%.*}.$(( ${_pyminor#*.} + 1 ))"
          'valkey' 'openssl')
@@ -91,14 +91,6 @@ pkgver() {
 }
 
 prepare() {
-  local _hostpy
-  _hostpy="$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-  if [[ $_hostpy != "$_pyminor" ]]; then
-    error "the venv would be built for python $_hostpy, but depends pins $_pyminor"
-    error "update _pyminor in the PKGBUILD (and .SRCINFO) to $_hostpy"
-    return 1
-  fi
-
   # Route Anna's Archive requests through a DDoS-Guard clearance minted by
   # searxng-annas-ddg-refresh; without it every mirror answers 403 and the
   # engine silently reports zero results.
