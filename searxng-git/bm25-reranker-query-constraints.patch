@@ -1,81 +1,6 @@
-diff -urN a/src/searxng_bm25_reranker/_constraints.py b/src/searxng_bm25_reranker/_constraints.py
---- a/src/searxng_bm25_reranker/_constraints.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/src/searxng_bm25_reranker/_constraints.py	2026-09-19 21:47:27.907057669 +0000
-@@ -0,0 +1,71 @@
-+"""Query-constraint boosts for BM25 reranking.
-+
-+Uses zerodep's ``query_tools`` to pull quoted phrases and ``+required`` terms
-+out of the query, then boosts results whose text actually contains them.
-+
-+Only *presence* is rewarded. Search snippets are short, so a missing phrase
-+says little about the page behind it.
-+
-+Negations (``not X``, ``without X``) are deliberately ignored. The parser
-+matches natural-language triggers, so "wifi not working" or "404 not found"
-+would demote exactly the results the user wants, and a lexical match cannot
-+tell "coffee without caffeine" from "caffeine".
-+"""
-+
-+from __future__ import annotations
-+
-+import dataclasses
-+
-+from ._tokenizer import cjk_tokenize
-+from ._vendor.query_tools import QueryConstraintParser
-+from ._vendor.sparse_search import Result
-+
-+# BM25 score gain per satisfied constraint (0.5 = +50%).
-+CONSTRAINT_BOOST = 0.5
-+
-+_PARSER = QueryConstraintParser()
-+
-+
-+def _normalize(text: str) -> str:
-+    """Lowercase and collapse whitespace so phrases match across line breaks."""
-+    return " ".join(text.lower().split())
-+
-+
-+def boost_constraint_matches(
-+    results: list[Result], fields: dict[str, tuple[str, ...]], query: str
-+) -> list[Result]:
-+    """Boost results that contain the query's quoted phrases or +required terms.
-+
-+    Args:
-+        results: BM25 results sorted by descending score (non-negative scores).
-+        fields: Document id -> searchable field texts (e.g. title, content).
-+            Phrases are matched per field, never across a field boundary.
-+        query: Raw user query, before any constraint stripping.
-+
-+    Returns:
-+        ``results`` unchanged when the query has no constraints, otherwise new
-+        results re-sorted by boosted score.
-+    """
-+    constraints = _PARSER.parse(query)
-+    phrases = list(filter(None, map(_normalize, constraints.exact_phrases)))
-+    required = list(
-+        filter(None, (set(cjk_tokenize(t)) for t in constraints.required_terms))
-+    )
-+    if not phrases and not required:
-+        return results
-+
-+    boosted: list[Result] = []
-+    for result in results:
-+        doc_fields = fields.get(result.doc_id, ())
-+        normalized = [_normalize(f) for f in doc_fields]
-+        tokens = {tok for f in doc_fields for tok in cjk_tokenize(f)}
-+        matches = sum(any(p in f for f in normalized) for p in phrases)
-+        matches += sum(term <= tokens for term in required)
-+        boosted.append(
-+            dataclasses.replace(
-+                result, score=result.score * (1.0 + CONSTRAINT_BOOST * matches)
-+            )
-+        )
-+
-+    boosted.sort(key=lambda r: r.score, reverse=True)
-+    return boosted
 diff -urN a/src/searxng_bm25_reranker/__init__.py b/src/searxng_bm25_reranker/__init__.py
 --- a/src/searxng_bm25_reranker/__init__.py	2026-09-09 12:04:49.000000000 +0000
-+++ b/src/searxng_bm25_reranker/__init__.py	2026-09-19 21:47:27.907201991 +0000
++++ b/src/searxng_bm25_reranker/__init__.py	2026-11-06 17:08:22.902975040 +0000
 @@ -2,6 +2,7 @@
  
  Uses sparse_search (zerodep BM25 implementation) to rerank search results
@@ -118,10 +43,121 @@ diff -urN a/src/searxng_bm25_reranker/__init__.py b/src/searxng_bm25_reranker/__
  
          # Build engine ranking from original positions
          engine_ranking = [
+diff -urN a/src/searxng_bm25_reranker/_constraints.py b/src/searxng_bm25_reranker/_constraints.py
+--- a/src/searxng_bm25_reranker/_constraints.py	1970-01-01 00:00:00.000000000 +0000
++++ b/src/searxng_bm25_reranker/_constraints.py	2026-11-06 17:08:22.902963546 +0000
+@@ -0,0 +1,107 @@
++"""Query-constraint boosts for BM25 reranking.
++
++Uses zerodep's ``query_tools`` to pull quoted phrases and ``+required`` terms
++out of the query, then boosts results whose text actually contains them.
++
++Only *presence* is rewarded. Search snippets are short, so a missing phrase
++says little about the page behind it.
++
++Negations (``not X``, ``without X``) are deliberately ignored. The parser
++matches natural-language triggers, so "wifi not working" or "404 not found"
++would demote exactly the results the user wants, and a lexical match cannot
++tell "coffee without caffeine" from "caffeine".
++"""
++
++from __future__ import annotations
++
++import dataclasses
++
++from ._tokenizer import _is_cjk, cjk_tokenize
++from ._vendor.query_tools import QueryConstraintParser
++from ._vendor.sparse_search import Result
++
++# BM25 score gain per satisfied constraint (0.5 = +50%).
++CONSTRAINT_BOOST = 0.5
++
++_PARSER = QueryConstraintParser()
++
++
++def _normalize(text: str) -> str:
++    """Lowercase and collapse whitespace so phrases match across line breaks."""
++    return " ".join(text.lower().split())
++
++
++def _is_spaceless(char: str) -> bool:
++    """True for scripts written without spaces between words (CJK, kana)."""
++    cp = ord(char)
++    return _is_cjk(char) or 0x3040 <= cp <= 0x30FF or 0x31F0 <= cp <= 0x31FF
++
++
++def _is_spaced_word_char(char: str) -> bool:
++    """True for a word character of a script that separates words with spaces."""
++    return (char.isalnum() or char == "_") and not _is_spaceless(char)
++
++
++def _contains_phrase(text: str, phrase: str) -> bool:
++    """Whether ``text`` contains ``phrase`` as whole words.
++
++    An edge of the phrase must not touch another word character of a spaced
++    script: ``"art"`` does not match ``cartography``. CJK and kana have no
++    spaces to anchor on, so ``"缓存"`` still matches inside ``redis缓存穿透``
++    and ``"redis缓存"`` inside ``用redis缓存``. Worst case O(len(text) * len(phrase)).
++    """
++    check_left = _is_spaced_word_char(phrase[0])
++    check_right = _is_spaced_word_char(phrase[-1])
++    start = text.find(phrase)
++    while start != -1:
++        end = start + len(phrase)
++        left_ok = not (check_left and start and _is_spaced_word_char(text[start - 1]))
++        right_ok = not (
++            check_right and end < len(text) and _is_spaced_word_char(text[end])
++        )
++        if left_ok and right_ok:
++            return True
++        start = text.find(phrase, start + 1)
++    return False
++
++
++def boost_constraint_matches(
++    results: list[Result], fields: dict[str, tuple[str, ...]], query: str
++) -> list[Result]:
++    """Boost results that contain the query's quoted phrases or +required terms.
++
++    Args:
++        results: BM25 results sorted by descending score (non-negative scores).
++        fields: Document id -> searchable field texts (e.g. title, content).
++            Phrases are matched per field, never across a field boundary.
++        query: Raw user query, before any constraint stripping.
++
++    Returns:
++        ``results`` unchanged when the query has no constraints, otherwise new
++        results re-sorted by boosted score.
++    """
++    constraints = _PARSER.parse(query)
++    phrases = list(filter(None, map(_normalize, constraints.exact_phrases)))
++    required = list(
++        filter(None, (set(cjk_tokenize(t)) for t in constraints.required_terms))
++    )
++    if not phrases and not required:
++        return results
++
++    boosted: list[Result] = []
++    for result in results:
++        doc_fields = fields.get(result.doc_id, ())
++        normalized = [_normalize(f) for f in doc_fields]
++        tokens = {tok for f in doc_fields for tok in cjk_tokenize(f)}
++        matches = sum(
++            any(_contains_phrase(f, p) for f in normalized) for p in phrases
++        )
++        matches += sum(term <= tokens for term in required)
++        boosted.append(
++            dataclasses.replace(
++                result, score=result.score * (1.0 + CONSTRAINT_BOOST * matches)
++            )
++        )
++
++    boosted.sort(key=lambda r: r.score, reverse=True)
++    return boosted
 diff -urN a/src/searxng_bm25_reranker/_vendor/query_tools.py b/src/searxng_bm25_reranker/_vendor/query_tools.py
 --- a/src/searxng_bm25_reranker/_vendor/query_tools.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/src/searxng_bm25_reranker/_vendor/query_tools.py	2026-09-19 21:45:12.913659108 +0000
-@@ -0,0 +1,276 @@
++++ b/src/searxng_bm25_reranker/_vendor/query_tools.py	2026-11-06 17:08:22.902891692 +0000
+@@ -0,0 +1,278 @@
 +# /// zerodep
 +# version = "0.1.0"
 +# deps = []
@@ -293,7 +329,9 @@ diff -urN a/src/searxng_bm25_reranker/_vendor/query_tools.py b/src/searxng_bm25_
 +
 +_NEGATION_RE = re.compile(r"\b(not|without|except|excluding|no)\s+(\w+)", re.IGNORECASE)
 +_QUOTED_RE = re.compile(r'"([^"]+)"')
-+_REQUIRED_RE = re.compile(r"\+(\w+)")
++# Local change from zerodep: "+" must start a token, so "1+1" or "c+d" in a
++# query does not turn the right-hand operand into a required term.
++_REQUIRED_RE = re.compile(r"(?<!\S)\+(\w+)")
 +
 +
 +@dataclass(frozen=True, slots=True)

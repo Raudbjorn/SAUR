@@ -17,9 +17,14 @@ makedepends=('git' 'python-build' 'python-msgspec' 'python-setuptools'
              # the Timetable theme is a LESS override layer, so the client
              # stylesheet is rebuilt from source with upstream's vite pipeline
              'npm' 'nodejs')
-# 'python' is a hard dependency: the venv links against the system interpreter,
-# so a CPython minor-version bump requires a rebuild of this package.
-depends=('python' 'valkey' 'openssl')
+# The venv links against the system interpreter and its site-packages and
+# compiled extensions are tied to one CPython minor version, so the package
+# pins the minor it was built for. pacman then refuses a CPython minor bump
+# until this package is rebuilt, instead of letting the service break on start.
+# prepare() fails if the build host's python does not match _pyminor.
+_pyminor=3.14
+depends=("python>=${_pyminor}" "python<${_pyminor%.*}.$(( ${_pyminor#*.} + 1 ))"
+         'valkey' 'openssl')
 optdepends=('nginx: reverse proxy, see /usr/share/doc/searxng/searxng.example.com.conf'
             'flaresolverr: DDoS-Guard clearance for the Annas Archive engines')
 provides=("searxng=${pkgver}")
@@ -29,11 +34,14 @@ install="$pkgname.install"
 _giturl="https://github.com/searxng/searxng"
 _gitbranch="master"
 # BM25 reranking plugin (AGPL-3.0); the patch adds query-constraint boosting
-# on top of upstream, vendoring zerodep's query_tools.
+# on top of upstream, vendoring zerodep's query_tools. Pinned to the commit the
+# patch was written against: pkgver() only tracks searxng, and upstream main
+# has since moved the plugin under packages/, where the patch no longer applies
+# (https://github.com/Raudbjorn/SAUR/issues/22).
 _rerankerurl="https://github.com/Oaklight/searxng-bm25-reranker"
-_rerankerbranch="main"
+_rerankercommit="7f7f3a014e48d74503d42689521f52c890df7ad6"
 source=(git+$_giturl#branch=$_gitbranch
-        git+$_rerankerurl#branch=$_rerankerbranch
+        git+$_rerankerurl#commit=$_rerankercommit
         'settings.yml'
         'searxng.sysusers'
         'searxng.tmpfiles'
@@ -61,12 +69,12 @@ b2sums=('SKIP'
         '6a5edabee182d0d30432d07a4ed54870314cb2d7d1d65daee0486a661cbd04cf4be3437eeaa973c015a911c00e90df9d2e45664840d7e7226248964793c41ee1'
         'ed0e4bb207472ee3a875aba9c2a372446d9a3a678d5b649e9b937a9b5d69af32cdd3edb0549259384ae237a196e87739ea7b4d2753b71861f3a17d8cd666c7ee'
         '77c9a99be9942233a951b3d5267c9317bb20989a7acde9cfff377666cf974b4100d05cf63f63704dc35e91e61ed720e99e98e62775f5195e0b9ea08c66120fb3'
-        'd284ef8052ed736d3ed30531d5dd31f8db71034acda703f657838f1b8cb713c351637e4f9f1aef4500b3cc82528fb689905fe44cc0e2ea10878f1e89559cf8eb'
+        '6e93d073fed1ace8bba1da54a8b14e7c2a3bb2884b463e0e43f9aebc270fdde91d04b3f077388961ca396334c1bdde3b5a19c54d7ff3b98ab774ba01cd5cf86c'
         '794ab9013608db97a5ce3f3cf6cda8fc9a8d7845f203cc63f8382601e7538807d9ead4bd95d8302ccae4ee1c915729aea016a6bdaf74bafb0731063eee1dce8b'
         '1dca8eef2e3e4b9d707dd379d0bc828f59a2b19cee89fd0b8696aa4c86cd491f51787bc09359a8f6268079ee2a624e52bd1f6fa56acdce547d81a1e15f68d8b5'
         'ff12d7843c0d36788b309e399e6979ea0b7f80a007e6c0129bde0f89bec30db8c3bf55ff979596ced16d457330463b147db8b1504e3dcd05e6532317fb56f0eb'
         'b30e697a28f98073810f68c2ee000bf9417547d83462c062e56924a212e750da0f79ae8774a34877e74538125d18d2d98418895c8f47b2f389c8a4c2cc1d9971'
-        'fde94440195c84d39204944dc887ecf9188f5b77027fb8e24fd2c514d54d2ee46c6c175a2c3b43ad47afcaef0a730868606c43195f884ac912823a0d68de7b7d'
+        '9b229a636cbc7c04cd033fe3444b81a2dd6a50567183722fdd583596708737b053c9c91f228db4e44d8146b35778595940811da86fc99c528843b7c02338fc35'
         'd0d282a6f92920c0975026bbeabbcf8f8d65663b1d915c869e952c3fafc9f08117ffc09cc3a83a5691a6330deaeb9d883a60e0be5056f4b0e57d05f234307fbd'
         '7774f07c14e2be01722ec91af8edfb6653053328d262a7f65332c650ca26e22565a43d5913084b9cce07e673607ff01c9b90f535c3890a1eda97786927290bc7'
         '4f08ab12b07ea6c20a61c6aa76ba7f852fdb27a5978cce8aee992aac890e9e3719739f1b1eef2997898e21163cc8df10cb217248112f2b16de17f74561d9c719'
@@ -83,6 +91,14 @@ pkgver() {
 }
 
 prepare() {
+  local _hostpy
+  _hostpy="$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+  if [[ $_hostpy != "$_pyminor" ]]; then
+    error "the venv would be built for python $_hostpy, but depends pins $_pyminor"
+    error "update _pyminor in the PKGBUILD (and .SRCINFO) to $_hostpy"
+    return 1
+  fi
+
   # Route Anna's Archive requests through a DDoS-Guard clearance minted by
   # searxng-annas-ddg-refresh; without it every mirror answers 403 and the
   # engine silently reports zero results.

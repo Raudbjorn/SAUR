@@ -16,7 +16,8 @@ pkgbase = searxng-git
 	makedepends = uv
 	makedepends = npm
 	makedepends = nodejs
-	depends = python
+	depends = python>=3.14
+	depends = python<3.15
 	depends = valkey
 	depends = openssl
 	optdepends = nginx: reverse proxy, see /usr/share/doc/searxng/searxng.example.com.conf
@@ -29,7 +30,7 @@ pkgbase = searxng-git
 	backup = etc/searxng/limiter.toml
 	backup = etc/searxng/favicons.toml
 	source = git+https://github.com/searxng/searxng#branch=master
-	source = git+https://github.com/Oaklight/searxng-bm25-reranker#branch=main
+	source = git+https://github.com/Oaklight/searxng-bm25-reranker#commit=7f7f3a014e48d74503d42689521f52c890df7ad6
 	source = settings.yml
 	source = searxng.sysusers
 	source = searxng.tmpfiles
@@ -57,12 +58,12 @@ pkgbase = searxng-git
 	b2sums = 6a5edabee182d0d30432d07a4ed54870314cb2d7d1d65daee0486a661cbd04cf4be3437eeaa973c015a911c00e90df9d2e45664840d7e7226248964793c41ee1
 	b2sums = ed0e4bb207472ee3a875aba9c2a372446d9a3a678d5b649e9b937a9b5d69af32cdd3edb0549259384ae237a196e87739ea7b4d2753b71861f3a17d8cd666c7ee
 	b2sums = 77c9a99be9942233a951b3d5267c9317bb20989a7acde9cfff377666cf974b4100d05cf63f63704dc35e91e61ed720e99e98e62775f5195e0b9ea08c66120fb3
-	b2sums = d284ef8052ed736d3ed30531d5dd31f8db71034acda703f657838f1b8cb713c351637e4f9f1aef4500b3cc82528fb689905fe44cc0e2ea10878f1e89559cf8eb
+	b2sums = 6e93d073fed1ace8bba1da54a8b14e7c2a3bb2884b463e0e43f9aebc270fdde91d04b3f077388961ca396334c1bdde3b5a19c54d7ff3b98ab774ba01cd5cf86c
 	b2sums = 794ab9013608db97a5ce3f3cf6cda8fc9a8d7845f203cc63f8382601e7538807d9ead4bd95d8302ccae4ee1c915729aea016a6bdaf74bafb0731063eee1dce8b
 	b2sums = 1dca8eef2e3e4b9d707dd379d0bc828f59a2b19cee89fd0b8696aa4c86cd491f51787bc09359a8f6268079ee2a624e52bd1f6fa56acdce547d81a1e15f68d8b5
 	b2sums = ff12d7843c0d36788b309e399e6979ea0b7f80a007e6c0129bde0f89bec30db8c3bf55ff979596ced16d457330463b147db8b1504e3dcd05e6532317fb56f0eb
 	b2sums = b30e697a28f98073810f68c2ee000bf9417547d83462c062e56924a212e750da0f79ae8774a34877e74538125d18d2d98418895c8f47b2f389c8a4c2cc1d9971
-	b2sums = fde94440195c84d39204944dc887ecf9188f5b77027fb8e24fd2c514d54d2ee46c6c175a2c3b43ad47afcaef0a730868606c43195f884ac912823a0d68de7b7d
+	b2sums = 9b229a636cbc7c04cd033fe3444b81a2dd6a50567183722fdd583596708737b053c9c91f228db4e44d8146b35778595940811da86fc99c528843b7c02338fc35
 	b2sums = d0d282a6f92920c0975026bbeabbcf8f8d65663b1d915c869e952c3fafc9f08117ffc09cc3a83a5691a6330deaeb9d883a60e0be5056f4b0e57d05f234307fbd
 	b2sums = 7774f07c14e2be01722ec91af8edfb6653053328d262a7f65332c650ca26e22565a43d5913084b9cce07e673607ff01c9b90f535c3890a1eda97786927290bc7
 	b2sums = 4f08ab12b07ea6c20a61c6aa76ba7f852fdb27a5978cce8aee992aac890e9e3719739f1b1eef2997898e21163cc8df10cb217248112f2b16de17f74561d9c719
