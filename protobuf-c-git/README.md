@@ -30,10 +30,12 @@
 
 ## Patch handling
 
-`prepare()` applies each `*.patch` with `git apply`, unless
-`git apply --reverse --check` shows that the tree already contains it. Once
-PR #797 is merged into `next`, the patch is skipped rather than failing the
-build. At that point remove it from `source=()`.
+`prepare()` applies each patch listed in `_patches=()` with `git apply`, unless
+`git apply --reverse --check` shows that the tree already contains it. Only
+the listed patches are applied, never a `*.patch` glob, so a stale patch left
+in a reused `$srcdir` cannot break the build. Once PR #797 is merged into
+`next`, the patch is skipped rather than failing the build. At that point
+remove it from `_patches=()`; `source=()` picks the list up from there.
 
 ## Build
 

@@ -13,10 +13,14 @@ makedepends=('git')
 provides=("protobuf-c=$pkgver" 'libprotobuf-c.so')
 conflicts=('protobuf-c')
 options=('staticlibs')
+# patches applied by prepare(); listed explicitly so stale files left in $srcdir are never applied
+_patches=(
+  # https://github.com/protobuf-c/protobuf-c/pull/797 (FieldDescriptor::label() removed in protobuf >= 34)
+  'protobuf-c-pr797-protobuf34-label.patch'
+)
 # 'next' is upstream's development branch; 'master' only moves on releases
 source=("git+https://github.com/protobuf-c/protobuf-c.git#branch=next"
-        # https://github.com/protobuf-c/protobuf-c/pull/797 (FieldDescriptor::label() removed in protobuf >= 34)
-        "protobuf-c-pr797-protobuf34-label.patch")
+        "${_patches[@]}")
 sha256sums=('SKIP'
             'bf70df90f83d18fa2d4f2415378aa64e27ddaa8d1334deab2fde0407035dae90')
 
@@ -32,12 +36,12 @@ prepare() {
   cd "protobuf-c"
 
   local _patch
-  for _patch in "$srcdir"/*.patch; do
+  for _patch in "${_patches[@]}"; do
     # skip patches upstream has already merged
-    if git apply --reverse --check "$_patch" 2>/dev/null; then
-      echo "Skipping already-applied ${_patch##*/}"
+    if git apply --reverse --check "$srcdir/$_patch" 2>/dev/null; then
+      echo "Skipping already-applied $_patch"
     else
-      git apply "$_patch"
+      git apply "$srcdir/$_patch"
     fi
   done
 
