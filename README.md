@@ -17,6 +17,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`okteta-qt6-git`](okteta-qt6-git/) | KDE hex editor, Qt6/KF6 port branch replayed on current `master` | Buildable; upstream port lacks the Structures tool |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
 | [`protobuf-c-git`](protobuf-c-git/) | protobuf-c from upstream `next`, patched to build against current protobuf (PR #797) | Buildable; clean-chroot build and `check()` pass against `extra/protobuf` 36.1 |
+| [`purple-facebook-git`](purple-facebook-git/) | Facebook Messenger protocol plugin for libpurple 2, tracking upstream `master` | Buildable with AUR `libpurple` and `libgadu`; Facebook login untested |
 | [`python-docling`](python-docling/) | Importable Docling library (`docling-slim` upstream), no CLI | Buildable |
 | [`python-docling-core`](python-docling-core/) | Docling data types and serialization; `tests/` rename and typer relaxation | Buildable |
 | [`python-docling-ibm-models`](python-docling-ibm-models/) | TableFormer and layout models; 4.0.2 is the floor `docling` requires | Buildable |
@@ -76,6 +77,10 @@ SAUR/
 │   ├── *.patch              # Pinned upstream PR #797, skipped once merged
 │   ├── PKGBUILD             # `next` branch, soname deps, check() enabled
 │   └── README.md            # Why `next`, patch provenance, proto3 optional gap
+├── purple-facebook-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # VCS recipe; vendored pidgin tree, no hg, autoreconf in prepare()
+│   └── README.md            # Changes from AUR recipe, AUR libpurple/libgadu chain, protoc-c pitfall
 ├── python-docling/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Library-only recipe, bytecode-level fix
