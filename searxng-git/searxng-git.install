@@ -4,24 +4,42 @@ _gen_secret() {
     # overwritten and re-running this is a no-op.
     grep -q 'secret_key: "ultrasecretkey"' "$settings" 2>/dev/null || return 0
 
-    local key
+    local key="" raw=""
     if command -v openssl >/dev/null 2>&1; then
-        key="$(openssl rand -hex 32)"
-    else
-        key="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+        key="$(openssl rand -hex 32)" || key=""
     fi
-    sed -i "s|secret_key: \"ultrasecretkey\"|secret_key: \"${key}\"|" "$settings"
+    if [ -z "$key" ]; then
+        # checked on its own: piped straight into tr, an od failure would be
+        # masked by tr's exit status
+        raw="$(od -An -tx1 -N32 /dev/urandom)" || raw=""
+        key="$(printf '%s' "$raw" | tr -d ' \n')"
+    fi
+    case "$key" in
+        *[!0-9a-f]*) key="" ;;
+    esac
+    if [ "${#key}" -ne 64 ]; then
+        echo "==> ERROR: could not generate server.secret_key; set it in $settings by hand" >&2
+        return 1
+    fi
+
+    if ! sed -i "s|secret_key: \"ultrasecretkey\"|secret_key: \"${key}\"|" "$settings" \
+        || grep -q 'secret_key: "ultrasecretkey"' "$settings"; then
+        echo "==> ERROR: could not replace the secret_key placeholder in $settings; set it by hand" >&2
+        return 1
+    fi
     echo ":: generated a unique server.secret_key in $settings"
 }
 
 post_install() {
-    _gen_secret
+    local rc=0
+    _gen_secret || rc=$?
     cat <<'MSG'
 :: searxng listens on 127.0.0.1:8888 and is not enabled at boot.
      systemctl enable --now searxng.service
 :: The Anna's Archive engines need FlareSolverr on 127.0.0.1:8191:
      systemctl enable --now searxng-annas-ddg-refresh.timer
 MSG
+    return "$rc"
 }
 
 post_upgrade() {
