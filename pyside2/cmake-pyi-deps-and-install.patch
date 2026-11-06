@@ -1,0 +1,26 @@
+--- a/sources/pyside2/cmake/Macros/PySideModules.cmake
++++ b/sources/pyside2/cmake/Macros/PySideModules.cmake
+@@ -209,13 +209,20 @@
+                       "${SHIBOKEN_PYTHON_INTERPRETER}"
+                       "${CMAKE_CURRENT_SOURCE_DIR}/../support/generate_pyi.py" ${generate_pyi_options})
+     add_dependencies("${module_NAME}_pyi" ${module_NAME})
++    # generate_pyi.py imports shiboken2; without this edge a parallel (Ninja) build can
++    # run it before the shiboken2 extension exists, and Python then picks up the
++    # generator's "shiboken2/" output directory as an empty namespace package.
++    if(TARGET shibokenmodule)
++        add_dependencies("${module_NAME}_pyi" shibokenmodule)
++    endif()
+ 
+     # install
+     install(TARGETS ${module_NAME} LIBRARY DESTINATION "${PYTHON_SITE_PACKAGES}/PySide2")
+ 
+-    file(GLOB hinting_stub_files RELATIVE "${CMAKE_CURRENT_BINARY_DIR}/PySide2" "${CMAKE_CURRENT_BINARY_DIR}/PySide2/*.pyi")
+-    install(FILES ${hinting_stub_files}
+-            DESTINATION "${PYTHON_SITE_PACKAGES}/PySide2")
++    # The stub is produced at build time, so a configure-time file(GLOB) finds nothing
++    # on a clean build; install the known output path instead.
++    install(FILES "${pysidebindings_BINARY_DIR}/PySide2/${module_NAME}.pyi"
++            DESTINATION "${PYTHON_SITE_PACKAGES}/PySide2" OPTIONAL)
+ 
+     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/PySide2/${module_NAME}/pyside2_${lower_module_name}_python.h
+             DESTINATION include/PySide2${pyside2_SUFFIX}/${module_NAME}/)

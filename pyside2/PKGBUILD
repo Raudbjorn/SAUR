@@ -1,0 +1,198 @@
+# Maintainer: envolution
+# Contributor: Antonio Rojas <arojas@archlinux.org>
+# Contributor: Felix Yan <felixonmars@archlinux.org>
+# shellcheck shell=bash disable=SC2034,SC2154
+
+pkgname=(
+  pyside2
+  pyside2-tools
+  shiboken2
+  python-shiboken2
+)
+pkgbase=pyside2
+pkgver=5.15.19
+pkgrel=1
+# Debian removed pyside2 from unstable after 5.15.18-1; its patch set still applies
+# to 5.15.19 and is fetched from snapshot.debian.org (immutable archive).
+_debver=5.15.18-1
+_debsnap=20260121T023805Z
+pkgdesc="CPython bindings generator for C++ libraries - Debian patches ${_debver}"
+arch=(x86_64)
+url="https://wiki.qt.io/Qt_for_Python"
+license=('LGPL-3.0-or-later')
+depends=(qt5-multimedia qt5-tools qt5-sensors qt5-charts qt5-webengine
+  qt5-websockets qt5-speech qt5-3d qt5-svg qt5-script qt5-scxml qt5-x11extras
+  qt5-quickcontrols2 qt5-serialport qt5-remoteobjects qt5-xmlpatterns)
+# shiboken2's header parser needs libclang <= 21: LLVM 22 removed ElaboratedType, and
+# shiboken2 (EOL upstream) then resolves unqualified nested types to the wrong class
+# (e.g. QNetworkProxy::Capabilities -> QNetworkConfigurationManager::Capabilities).
+_llvm_ver=21
+makedepends=(cmake ninja python-numpy python-setuptools python-wheel
+  "llvm${_llvm_ver}" "clang${_llvm_ver}")
+
+source=(
+  "https://download.qt.io/official_releases/QtForPython/pyside2/PySide2-${pkgver}-src/pyside-setup-opensource-src-${pkgver}.tar.xz"
+  "https://snapshot.debian.org/archive/debian/${_debsnap}/pool/main/p/pyside2/pyside2_${_debver}.debian.tar.xz"
+  Modify-sendCommand-signatures.patch
+  cmake-findpython.patch
+  python-3.14.patch
+  python-3.14-metaclass-tp_new.patch
+  cmake-pyi-deps-and-install.patch
+)
+
+sha256sums=('c5640f5fc754522d4ac4b21af89d9922f7146fd32ab62d3494f58c7c7055d4c5'
+            '43de2282f2e82d456d0f7e5a971560fb94890f92ba462641971c84ab4339dff3'
+            '2f39461136a718a9f75bd94c1e71fc358764af25f68c650fd503c777e32ff302'
+            '4d82961c7f978dadae6e82c73fb0a239dbb62db5f66106975f75dd25161843e9'
+            'ca2931c6bb9d2c14ac11c9c704c6096a270ee7344f018cb4d8e3d5e8e4644f6b'
+            '39c6500d876b5acc06788a38213bc7b8fd82fb535ca940371b6dc89f28005f0d'
+            '4caa1892bbb2a69d8f43b3d94fccb72d96678e7b36e3ce112907eeeeb7214e53')
+
+_pkgdir="pyside-setup-opensource-src-${pkgver}"
+
+# Debian patches that are not applied:
+#  - blacklist-failing-tests.patch: only edits the test blacklist (tests are not
+#    built here) and no longer applies to 5.15.19.
+_deb_skip=(blacklist-failing-tests.patch)
+
+_get_python_libdir() {
+  python -c "from sysconfig import get_path; print(get_path('platlib'))"
+}
+
+# Job count for Ninja: honour -jN / -j N / --jobs=N from MAKEFLAGS (set by
+# makepkg.conf) so the user's throttling still applies; fall back to nproc.
+_build_jobs() {
+  local _jobs
+  _jobs=$(sed -nE 's/.*(-j[[:space:]]*|--jobs=)([0-9]+).*/\2/p' <<<"${MAKEFLAGS:-}")
+  printf '%s\n' "${_jobs:-$(nproc)}"
+}
+
+prepare() {
+  cd "$_pkgdir"
+  local _patch
+  while read -r _patch; do
+    [[ -z $_patch || $_patch == \#* ]] && continue
+    [[ " ${_deb_skip[*]} " == *" $_patch "* ]] && continue
+    patch -Np1 -i "../debian/patches/$_patch"
+  done <../debian/patches/series
+  patch -Np1 -i ../Modify-sendCommand-signatures.patch
+  patch -Np1 -i ../cmake-findpython.patch
+  patch -Np1 -i ../python-3.14.patch
+  patch -Np1 -i ../python-3.14-metaclass-tp_new.patch
+  patch -Np1 -i ../cmake-pyi-deps-and-install.patch
+}
+
+build() {
+  cd "$_pkgdir"
+
+  local _numpy_inc
+  _numpy_inc="$(python -c 'import numpy; print(numpy.get_include())')"
+  CFLAGS="-I${_numpy_inc} ${CFLAGS}"
+  CXXFLAGS="-I${_numpy_inc} ${CXXFLAGS}"
+
+  # shiboken looks for lib/libclang.so and lib/clang/<ver>/include below this prefix
+  LLVM_INSTALL_DIR="/usr/lib/llvm${_llvm_ver}"
+  export LLVM_INSTALL_DIR
+
+  # The generated wrapper TUs are large and (with LTO) the module links are the
+  # memory peaks, so links get their own, smaller Ninja pool.
+  local _jobs _link_jobs
+  _jobs="$(_build_jobs)"
+  _link_jobs=$(( _jobs / 6 ))
+  (( _link_jobs < 1 )) && _link_jobs=1
+
+  cmake -B build -S . -G Ninja \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=None \
+    -DBUILD_TESTS=OFF \
+    -DPYTHON_EXECUTABLE=/usr/bin/python \
+    -DPYTHON_CONFIG_SUFFIX='python-config' \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.30 \
+    -DCMAKE_JOB_POOLS="link=${_link_jobs}" \
+    -DCMAKE_JOB_POOL_LINK=link
+
+  cmake --build build --parallel "${_jobs}"
+}
+
+package_shiboken2() {
+  pkgdesc='Generates bindings for C++ libraries using CPython source code'
+  # the generator links libclang.so.${_llvm_ver} (symlinked into /usr/lib by clang${_llvm_ver})
+  depends=('libxslt' 'qt5-xmlpatterns' "clang${_llvm_ver}")
+
+  cd "$_pkgdir"
+  DESTDIR="${pkgdir}" cmake --install build/sources/shiboken2
+
+  # Remove files conflicting with other packages
+  rm -r "${pkgdir}"/usr/lib/{python*,libshiboken*}
+  rm "${pkgdir}/usr/bin/shiboken_tool.py"
+}
+
+package_python-shiboken2() {
+  pkgdesc='Python bindings for shiboken2'
+  depends=('python' 'python-numpy' 'pyside2')
+  local _pythonpath
+  _pythonpath="$(_get_python_libdir)"
+
+  cd "$_pkgdir"
+  DESTDIR="${pkgdir}" cmake --install build/sources/shiboken2
+
+  # Remove unnecessary files
+  rm -r "${pkgdir}"/usr/{bin,include,lib/{cmake,pkgconfig}}
+
+  # Install egg-info
+  python setup.py egg_info --build-type=shiboken2
+  install -dm755 "${pkgdir}${_pythonpath}/shiboken2.egg-info"
+  cp -r shiboken2.egg-info/* "${pkgdir}${_pythonpath}/shiboken2.egg-info/"
+}
+
+package_pyside2() {
+  pkgdesc='Enables the use of Qt5 APIs in Python applications'
+  depends=(
+    'python-shiboken2'
+    'qt5-declarative'
+    'qt5-xmlpatterns'
+    'qt5-webchannel'
+    'qt5-svg'
+    'qt5-charts'
+    'qt5-webengine'
+    'qt5-sensors'
+    'qt5-serialport'
+    'qt5-quickcontrols2'
+    'qt5-speech'
+    'qt5-tools'
+    'qt5-scxml'
+    'qt5-x11extras'
+    'qt5-websockets'
+    'qt5-script'
+    'qt5-3d'
+    'qt5-remoteobjects'
+    'shiboken2'
+  )
+  provides=('qt5-python-bindings')
+  local _pythonpath
+  _pythonpath="$(_get_python_libdir)"
+
+  cd "$_pkgdir"
+  DESTDIR="${pkgdir}" cmake --install build/sources/pyside2
+
+  # Install egg-info
+  python setup.py egg_info --build-type=pyside2
+  install -dm755 "${pkgdir}${_pythonpath}/PySide2.egg-info"
+  cp -r PySide2.egg-info/* "${pkgdir}${_pythonpath}/PySide2.egg-info/"
+}
+
+package_pyside2-tools() {
+  pkgdesc='Tools for PySide2'
+  depends=(
+    'pyside2'
+    'qt5-base'
+    'gcc-libs'
+    'glibc')
+
+  cd "$_pkgdir"
+  DESTDIR="${pkgdir}" cmake --install build/sources/pyside2-tools
+
+  # Remove files provided by qt5-base
+  rm "${pkgdir}/usr/bin/"{rcc,uic,designer,pyside_tool.py}
+}
+# vim:set ts=2 sw=2 et:
