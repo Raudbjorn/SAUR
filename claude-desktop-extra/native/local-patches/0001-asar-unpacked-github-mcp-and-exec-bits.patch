@@ -1,0 +1,23 @@
+--- a/scripts/build-patched-tarball.sh
++++ b/scripts/build-patched-tarball.sh
+@@ -551,7 +551,19 @@
+ # (The .deb's node-pty uses the prebuilds/<platform>-<arch>/ layout, which loads
+ # from the unpacked dir; we preserve whatever the .deb shipped.)
+ log_info "Repacking app.asar..."
+-( cd "$APP_DIR" && asar pack app.asar.contents app.asar --unpack "{**/*.node,**/spawn-helper}" )
++# [local] Also unpack github-mcp-server: upstream flags it `unpacked` and the
++# app spawns resources/app.asar.unpacked/resources/github-mcp/github-mcp-server.
++( cd "$APP_DIR" && asar pack app.asar.contents app.asar --unpack "{**/*.node,**/spawn-helper,**/github-mcp/github-mcp-server}" )
++# [local] asar extract drops exec bits (upstream's header has no `executable`
++# flag), so restore every exec bit the .deb's app.asar.unpacked carried.
++if [ -d "$LIB_DIR/resources/app.asar.unpacked" ] && [ -d "$APP_DIR/app.asar.unpacked" ]; then
++    ( cd "$LIB_DIR/resources/app.asar.unpacked" && find . -type f -perm -u+x -print0 ) |
++        while IFS= read -r -d '' f; do
++            if [ -f "$APP_DIR/app.asar.unpacked/$f" ]; then
++                chmod 0755 "$APP_DIR/app.asar.unpacked/$f"
++            fi
++        done
++fi
+ rm -rf "$APP_DIR/app.asar.contents"
+ rm -rf "$TREE_DIR/resources/app.asar" "$TREE_DIR/resources/app.asar.unpacked"
+ mv "$APP_DIR/app.asar" "$TREE_DIR/resources/app.asar"

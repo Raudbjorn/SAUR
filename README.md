@@ -10,6 +10,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | Package | Description | Status |
 | --- | --- | --- |
 | [`caprine-electron44`](caprine-electron44/) | Caprine (Facebook Messenger) on the system Electron 44 runtime; ~25 MB less installed payload than AUR `caprine` | Buildable; smoke-tested to the login page, logged-in features untested |
+| [`claude-desktop-extra`](claude-desktop-extra/) | Claude Desktop with patrickjaja's extras; AUR recipe plus a host-tuned source build that fixes the unexecutable GitHub MCP server | AUR recipe verified (source, checksum, metadata); native build installed and audited on one host |
 | [`detect-it-easy-git`](detect-it-easy-git/) | Detect It Easy file-type identifier (`die`, `diec`, `diel`) built against Qt6 | Buildable; namcap reports only the inherited `/opt` layout and the `qt6-svg` plugin dependency |
 | [`docling`](docling/) | Docling CLI and model stack; avoids the `python-typer026` eviction | Buildable; XPU conversion blocked by a transformers fp64 defect, use `--device cpu` |
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
@@ -49,6 +50,15 @@ SAUR/
 │   ├── caprine.sh           # Launcher; @ELECTRON@ substituted in prepare()
 │   ├── PKGBUILD             # Electron 44, semver-range dependency refresh
 │   └── README.md            # Size reductions, floating deps, smoke test
+├── claude-desktop-extra/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── claude-desktop-extra.install  # AUR install hook, unchanged
+│   ├── native/
+│   │   ├── audit_pkg.py     # Pre-install audit against the signed upstream .deb
+│   │   ├── build-native.sh  # Source build: upstream HEAD, tuned bridges, tmpfs stage
+│   │   └── local-patches/   # Fixes applied to a staged copy of upstream's scripts
+│   ├── PKGBUILD             # AUR recipe at f3cd326, unchanged (prebuilt tarball)
+│   └── README.md            # Both build paths, github-mcp defect, crate holds
 ├── detect-it-easy-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Qt6-pinned VCS build; Ninja, MAKEFLAGS-driven jobs
