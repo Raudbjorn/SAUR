@@ -9,6 +9,7 @@
 /tinbase-git/tinbase-src/
 /trailmark-git/trailmark/
 /trailmark-git/trailmark-src/
+/xorg-server-git/xserver/
 
 # Local agent state and worktrees
 /.claude/
