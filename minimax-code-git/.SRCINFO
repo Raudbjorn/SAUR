@@ -1,0 +1,31 @@
+pkgbase = minimax-code-git
+	pkgdesc = MiniMax Code terminal AI coding agent (mcode CLI), built from GitHub main
+	pkgver = 0.7.2.r5.g6e062ae
+	pkgrel = 1
+	url = https://github.com/MiniMax-AI/minimax-code
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = corepack
+	makedepends = git
+	makedepends = npm
+	makedepends = python
+	depends = gcc-libs
+	depends = glibc
+	depends = nodejs>=22.19
+	depends = nodejs<27
+	optdepends = git: version control features
+	optdepends = python-pypdf: built-in PDF skill scripts
+	optdepends = python-docx: built-in DOCX skill scripts
+	optdepends = python-openpyxl: built-in XLSX skill scripts
+	provides = minimax-code=0.7.2
+	provides = mcode
+	conflicts = minimax-code
+	noextract = code-0.3.11.tgz
+	options = !debug
+	source = minimax-code::git+https://github.com/MiniMax-AI/minimax-code.git#branch=main
+	source = code-0.3.11.tgz::https://registry.npmjs.org/@minimax-ai/code/-/code-0.3.11.tgz
+	sha256sums = SKIP
+	sha256sums = d2e160be6081dd69b48da661bc6f9a6e049d258cbd0b3121ef1185d7ece52662
+
+pkgname = minimax-code-git
