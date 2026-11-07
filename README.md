@@ -38,6 +38,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`searxng-git`](searxng-git/) | SearXNG with a custom theme, BM25 reranking, and Anna's Archive made to actually return results | Builds, installs and runs; theme rebuild adds npm and nodejs to makedepends |
 | [`trailmark-git`](trailmark-git/) | Trailmark source-graph parser at upstream `f7e19d3`, plus fork and downstream patches | Buildable with `python-tree-sitter025` and AUR dependencies |
 | [`trid`](trid/) | File-type identifier from binary signatures; argument quoting and HTTPS definition updates fixed | Buildable |
+| [`xorg-server-git`](xorg-server-git/) | X.Org server from upstream `master` (26.1.99.1; split into server, common, devel, Xephyr, Xnest and Xvfb); driver ABI 28.0/26.0/11.0, so every `xf86-*` driver must be rebuilt | Buildable and installed; Xvfb, Xephyr and Xnest smoke-tested; Xorg itself not yet run on a real VT; no clean-chroot build yet |
 
 ## Repository layout
 
@@ -154,13 +155,19 @@ SAUR/
 │   ├── *.patch              # Fork + downstream patches, applied in prepare()
 │   ├── PKGBUILD             # Package recipe
 │   └── README.md            # Patch provenance and host-tuning caveats
-└── trid/
+├── trid/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # HTTPS sources; prepare() switches definition updates to HTTPS
+│   ├── README.md            # Fixes from the AUR recipe, StringZilla benchmark
+│   ├── trid.install         # Post-install definitions-update hint
+│   ├── trid.sh              # /usr/bin/trid wrapper
+│   └── update-trid-defs.*   # Updater script, systemd service and weekly timer
+└── xorg-server-git/
     ├── .SRCINFO             # Generated AUR metadata
-    ├── PKGBUILD             # HTTPS sources; prepare() switches definition updates to HTTPS
-    ├── README.md            # Fixes from the AUR recipe, StringZilla benchmark
-    ├── trid.install         # Post-install definitions-update hint
-    ├── trid.sh              # /usr/bin/trid wrapper
-    └── update-trid-defs.*   # Updater script, systemd service and weekly timer
+    ├── PKGBUILD             # Six-package split; ABI provides checked against source in prepare()
+    ├── README.md            # Driver ABI coupling, build notes, verification limits
+    ├── xorg-server-git.install  # Post-install logind note
+    └── xvfb-run*            # Wrapper script and man page (Fedora lineage)
 ```
 
 Upstream source checkouts used during package research are deliberately ignored. `makepkg` obtains its own source under the package's `src/` directory.
