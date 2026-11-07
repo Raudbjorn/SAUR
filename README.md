@@ -15,6 +15,7 @@ Sveinbjörn's Arch User Repository: reviewed `PKGBUILD` recipes for software I u
 | [`headroom-git`](headroom-git/) | Full-feature VCS build of Headroom, the LLM context-optimization layer | Buildable with the local `python-installer` bridge and AUR dependencies |
 | [`imhex-git`](imhex-git/) | ImHex hex editor from upstream `master` with ImHex-Patterns; offline submodule sources | Buildable; smoke-tested; no clean-chroot build yet |
 | [`magika-git`](magika-git/) | VCS build of Google's Magika CLI on the embedded tract runtime; upstream's locked crate graph is required | Buildable; CUDA path not exercised |
+| [`minimax-code-git`](minimax-code-git/) | MiniMax Code (`mcode`) terminal coding agent from upstream `main`, built on the system Node with a global-region default | Buildable and installed; `check()` passes, no clean-chroot build yet |
 | [`okteta-qt6-git`](okteta-qt6-git/) | KDE hex editor, Qt6/KF6 port branch replayed on current `master` | Buildable; upstream port lacks the Structures tool |
 | [`omp`](omp/) | Personal fork of oh-my-pi (terminal coding agent), built from a pinned release tag | Recipe verified (source, checksum, metadata); `build()` not yet exercised |
 | [`onetbb-git`](onetbb-git/) | oneTBB from a pinned upstream `master` commit with the stateful-allocator `concurrent_queue` patch (PR #1520); replaces the repository `onetbb` | Buildable and installed; 3 queue test binaries pass, full suite not run, no clean-chroot build yet |
@@ -72,6 +73,10 @@ SAUR/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Rust CLI from upstream main; locked graph, label-suite check()
 │   └── README.md            # Name collisions, tract lock pin, host-tuning measurements
+├── minimax-code-git/
+│   ├── .SRCINFO             # Generated AUR metadata
+│   ├── PKGBUILD             # pnpm build, global-region patch, /opt install, system Node
+│   └── README.md            # Deviations, name collision, Not claimed
 ├── okteta-qt6-git/
 │   ├── .SRCINFO             # Generated AUR metadata
 │   ├── PKGBUILD             # Port commits cherry-picked onto master in prepare()

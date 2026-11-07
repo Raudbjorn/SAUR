@@ -1,0 +1,217 @@
+# Maintainer: Sveinbjörn Geirsson <claude@sveinbjorn.dev>
+# Contributor: duanluan <duanluan@outlook.com>
+#
+# Builds MiniMax Code (mcode CLI) from the public GitHub source at the tip of
+# `main`, following upstream's own release pipeline:
+#   pnpm install --frozen-lockfile -> pnpm build -> scripts/package-cli-release.mjs
+#   -> npm install --global <archive>   (docs/installation.md, "GitHub release archive")
+# Docs: https://agent.minimax.io/docs/cli/quick-start
+#
+# Host tuning: the only native code compiled here is better-sqlite3 (SQLite
+# amalgamation + N-API binding). It is forced to build from source against the
+# system Node headers, so makepkg's CFLAGS/CXXFLAGS/LDFLAGS (e.g. -march=native,
+# -O3, mold, LTO), MAKEFLAGS and ccache all apply instead of a generic prebuilt.
+# Build in tmpfs for speed: BUILDDIR=/tmp/makepkg makepkg -si
+
+pkgname=minimax-code-git
+_pkgname=minimax-code
+_npmname='@minimax-ai/code'
+pkgver=0.7.2.r5.g6e062ae
+pkgrel=1
+pkgdesc='MiniMax Code terminal AI coding agent (mcode CLI), built from GitHub main'
+arch=('x86_64' 'aarch64')
+url='https://github.com/MiniMax-AI/minimax-code'
+license=('MIT')
+# Upstream engines: >=22.19 <23 || >=24.2 <27. The native binding is built for
+# the installed Node ABI; rebuild this package after a Node major upgrade.
+depends=(
+  'gcc-libs'
+  'glibc'
+  'nodejs>=22.19'
+  'nodejs<27'
+)
+makedepends=(
+  'corepack'
+  'git'
+  'npm'
+  'python'
+)
+optdepends=(
+  'git: version control features'
+  'python-pypdf: built-in PDF skill scripts'
+  'python-docx: built-in DOCX skill scripts'
+  'python-openpyxl: built-in XLSX skill scripts'
+)
+provides=("${_pkgname}=${pkgver%%.r*}" 'mcode')
+conflicts=("${_pkgname}")
+options=('!debug')
+# mcode-tools is extracted at build time from this pinned public npm archive
+# (scripts/lib/mcode-tools-artifact.mjs, which also verifies its sha512).
+# Vendoring it here makes it cacheable in SRCDEST and checksummed by makepkg.
+_mcode_tools_tgz='code-0.3.11.tgz'
+source=(
+  "${_pkgname}::git+${url}.git#branch=main"
+  "${_mcode_tools_tgz}::https://registry.npmjs.org/${_npmname}/-/${_mcode_tools_tgz}"
+)
+sha256sums=('SKIP'
+            'd2e160be6081dd69b48da661bc6f9a6e049d258cbd0b3121ef1185d7ece52662')
+noextract=("${_mcode_tools_tgz}")
+
+_NPM_REGISTRY='https://registry.npmjs.org/'
+_PNPM_VERSION='9.12.0'
+
+# Use only the system Node (/usr/bin/node): drop nvm/fnm/volta entries from PATH
+# so native bindings are compiled for the same ABI the launcher runs with.
+_sanitize_path() {
+  PATH="$(printf '%s' "${PATH}" | tr ':' '\n' \
+    | grep -Ev '/\.(nvm|fnm|volta|asdf)/|/\.local/share/(fnm|pnpm)' \
+    | paste -sd:)"
+  export PATH
+}
+
+# Native addon build settings shared by pnpm (prepare) and npm (build).
+_native_env() {
+  export npm_config_build_from_source=true   # skip prebuild-install downloads
+  export npm_config_nodedir=/usr              # system Node headers, no header download
+  export npm_config_registry="${_NPM_REGISTRY}"
+  export npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_ENABLE_STRICT=1
+  export CI=true                              # non-interactive pnpm
+}
+
+pkgver() {
+  cd "${_pkgname}"
+  git describe --long --tags --abbrev=7 --match 'v[0-9]*' \
+    | sed -E 's/^v//; s/([^-]*-g)/r\1/; s/-/./g'
+}
+
+prepare() {
+  _sanitize_path
+  _native_env
+  cd "${_pkgname}"
+
+  [[ "$(command -v node)" == /usr/bin/node ]] \
+    || { printf 'expected /usr/bin/node, got %s\n' "$(command -v node)" >&2; return 1; }
+
+  # Seed the build's artifact cache so it does not download it again.
+  install -Dm644 "${srcdir}/${_mcode_tools_tgz}" ".cache/artifacts/${_mcode_tools_tgz}"
+
+  corepack "pnpm@${_PNPM_VERSION}" install --frozen-lockfile
+}
+
+# Upstream falls back to the China region (agent.minimax.cn / api.minimaxi.com)
+# when no region was chosen, so global (.io) API keys fail with "401 invalid api
+# key". Default to the global region (agent.minimax.io / api.minimax.io)
+# instead. An explicit MAVIS_REGION=cn or a China login keeps working.
+# The edits are reverted after bundling (see build()) because upstream's release
+# packager requires a clean tracked tree.
+_REGION_PATCH_FILES=(
+  packages/tui/src/cli/environment.ts
+  packages/tui/src/auth/environment.ts
+  packages/tui/src/auth/application.ts
+  packages/tui/src/cli/telemetry-command.ts
+  packages/tui/src/tui/launcher.ts
+)
+_patch_default_region() {
+  sed -i -E \
+    -e "/sharedAuthScope\?\.region \?\?\$/{n;s/^([[:space:]]*)'cn',\$/\1'en',/}" \
+    -e "s/(region: options\.runtimeRegion \?\? )'cn'/\1'en'/" \
+    -e "s/(MAVIS_REGION === )'en' \? 'en' : 'cn'/\1'cn' ? 'cn' : 'en'/" \
+    "${_REGION_PATCH_FILES[@]}"
+  # Fail loudly if upstream moved the code and a default was not rewritten.
+  local changed
+  changed="$(git diff --numstat -- "${_REGION_PATCH_FILES[@]}" | awk '{s+=$1} END {print s+0}')"
+  if (( changed != 5 )); then
+    printf 'region default patch: expected 5 changed lines, got %s\n' "${changed}" >&2
+    return 1
+  fi
+}
+
+build() {
+  _sanitize_path
+  _native_env
+  cd "${_pkgname}"
+
+  local version tag
+  version="$(node -p "require('./package.json').version")"
+  tag="v${version}"
+
+  # MCODE_RELEASE_TAG makes the build record gitHead; the packager requires it.
+  # On untagged main commits the tag names the source version, and release.json
+  # records the exact revision that was built.
+  git checkout -q -- "${_REGION_PATCH_FILES[@]}"
+  _patch_default_region
+  MCODE_RELEASE_TAG="${tag}" corepack "pnpm@${_PNPM_VERSION}" build
+  git checkout -q -- "${_REGION_PATCH_FILES[@]}"
+
+  rm -rf "${srcdir}/release" "${srcdir}/stage"
+  node scripts/package-cli-release.mjs "${tag}" "${srcdir}/release"
+
+  # Upstream-documented archive install, into a private staging prefix.
+  npm install --global \
+    --prefix "${srcdir}/stage" \
+    --include=optional \
+    --ignore-scripts=false \
+    --allow-scripts=better-sqlite3 \
+    "${srcdir}/release/${_pkgname}-${version}.tar.gz"
+
+  local app="${srcdir}/stage/lib/node_modules/${_npmname}"
+  [[ -f "${app}/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]] \
+    || { printf 'better-sqlite3 native binding was not built\n' >&2; return 1; }
+
+  # Drop better-sqlite3 build intermediates; keep only the compiled binding.
+  (
+    cd "${app}/node_modules/better-sqlite3"
+    rm -rf deps src docs test benchmark \
+      build/Release/obj.target build/Release/.deps build/Release/obj build/deps
+    rm -f binding.gyp Makefile build/Makefile build/*.mk build/config.gypi \
+      build/Release/sqlite3.a build/Release/test_extension.node
+  )
+  # Windows/macOS-only launchers and natives are never loaded on Linux.
+  rm -f "${app}/internal-bin/mcode-tools.cmd" "${app}/internal-bin/"*.ps1
+  rm -rf "${app}/native/darwin" "${app}/native/win32" "${app}/vendor/srt-win"
+  rmdir --ignore-fail-on-non-empty "${app}/native"
+  # Keep only this architecture's seccomp helper (strip cannot parse the other).
+  local other_arch
+  case "${CARCH}" in
+    x86_64) other_arch=arm64 ;;
+    aarch64) other_arch=x64 ;;
+  esac
+  rm -rf "${app}/vendor/seccomp/${other_arch}"
+}
+
+check() {
+  _sanitize_path
+  local app="${srcdir}/stage/lib/node_modules/${_npmname}"
+  MINIMAX_DATA_DIR="$(mktemp -d)" /usr/bin/node "${app}/cli.js" --version
+  /usr/bin/node -e "new (require('${app}/node_modules/better-sqlite3'))(':memory:').prepare('select 1').get()"
+}
+
+package() {
+  local app="${srcdir}/stage/lib/node_modules/${_npmname}"
+  local dest="/opt/${_pkgname}"
+
+  # Installed outside npm's global prefix on purpose: the built-in updater then
+  # leaves the pacman-owned files alone (update through makepkg instead).
+  install -dm755 "${pkgdir}${dest}"
+  cp -a --no-preserve=ownership "${app}/." "${pkgdir}${dest}/"
+
+  find "${pkgdir}${dest}" -type d -exec chmod 755 '{}' +
+  find "${pkgdir}${dest}" -type f -perm /111 -exec chmod 755 '{}' +
+  find "${pkgdir}${dest}" -type f ! -perm /111 -exec chmod 644 '{}' +
+
+  # Pin the system Node: the native binding is compiled for its ABI.
+  install -Dm755 /dev/stdin "${pkgdir}/usr/bin/mcode" <<SCRIPT
+#!/bin/sh
+exec /usr/bin/node ${dest}/cli.js "\$@"
+SCRIPT
+  install -Dm755 /dev/stdin "${pkgdir}/usr/bin/mcode-tools" <<SCRIPT
+#!/bin/sh
+exec /usr/bin/node ${dest}/mcode-tools.js "\$@"
+SCRIPT
+
+  install -Dm644 "${app}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 "${app}/NOTICE" "${pkgdir}/usr/share/licenses/${pkgname}/NOTICE"
+  install -Dm644 "${app}/THIRD_PARTY_NOTICES.md" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/THIRD_PARTY_NOTICES.md"
+}
